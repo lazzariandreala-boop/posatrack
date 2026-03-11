@@ -1,0 +1,4 @@
+{
+  // Estende il tsconfig generato da Nuxt (include path alias, vue-tsc, ecc.)
+  "extends": "./.nuxt/tsconfig.json"
+}
