@@ -24,13 +24,18 @@
  */
 import { onMounted, onUnmounted } from 'vue'
 import { useAppState } from '~/composables/useAppState'
+import { useStore }    from '~/composables/useStore'
 
 const { currentView, isDesktop, updateLayout } = useAppState()
+const store = useStore()
 
 onMounted(() => {
   // Imposta il layout iniziale e aggiorna al resize
   updateLayout()
   window.addEventListener('resize', updateLayout)
+
+  // Sincronizzazione iniziale con GitHub Gist (no-op se non configurato)
+  store.initSync()
 })
 
 onUnmounted(() => {
@@ -73,6 +78,9 @@ onUnmounted(() => {
 
     <!-- Toast notification temporanea in cima -->
     <AppToast />
+
+    <!-- Modal impostazioni GitHub Gist -->
+    <GistSettingsModal />
 
   </div>
 </template>

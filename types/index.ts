@@ -80,6 +80,14 @@ export interface StoreData {
   dayNotes?:   Record<string, string>
   /** Foto di cantiere giornaliere: chiave = YYYY-MM-DD, valore = array di foto */
   sitePhotos?: Record<string, Photo[]>
+  /** Timestamp Unix ms dell'ultima scrittura – usato per conflict resolution con Gist */
+  lastModified?: number
+}
+
+/** Configurazione GitHub Gist per la sincronizzazione remota */
+export interface GistConfig {
+  token:  string  // Personal Access Token GitHub con scope "gist"
+  gistId: string  // ID del Gist privato
 }
 
 /** Vista attiva nell'app (navigazione single-page) */

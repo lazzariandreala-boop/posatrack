@@ -10,8 +10,10 @@
  * La visibilità è gestita in app.vue via v-if="isDesktop".
  */
 import { useAppState } from '~/composables/useAppState'
+import { useGistSync } from '~/composables/useGistSync'
 
-const { currentView, navigate } = useAppState()
+const { currentView, navigate, openGistSettings } = useAppState()
+const { syncStatus, isConfigured } = useGistSync()
 </script>
 
 <template>
@@ -70,6 +72,18 @@ const { currentView, navigate } = useAppState()
       </button>
 
     </nav>
+
+    <!-- Impostazioni Gist ────────────────────────────────────────── -->
+    <div class="sidebar-bottom">
+      <button class="sidebar-nav-btn sidebar-settings-btn" @click="openGistSettings">
+        <svg viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+        </svg>
+        Sincronizzazione
+        <span class="sync-badge" :class="isConfigured() ? syncStatus : 'idle'" />
+      </button>
+    </div>
 
     <!-- Versione ─────────────────────────────────────────────────── -->
     <div class="sidebar-version">v3.0 · PosaTrack</div>
@@ -174,12 +188,37 @@ const { currentView, navigate } = useAppState()
   }
 }
 
+/* Contenitore bottom (settings + version) */
+.sidebar-bottom {
+  padding: 10px 10px 6px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.sidebar-settings-btn {
+  width: 100%;
+}
+
+/* Badge di stato sincronizzazione */
+.sync-badge {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-left: auto;
+  flex-shrink: 0;
+  background: var(--dim);
+
+  &.ok      { background: var(--green);  }
+  &.error   { background: var(--red);    }
+  &.syncing { background: var(--orange); animation: blink 1s infinite; }
+  &.idle    { background: var(--dim);    }
+}
+
 /* Versione in fondo alla sidebar */
 .sidebar-version {
-  padding: 14px 20px;
+  padding: 10px 20px 14px;
   font-size: 11px;
   color: var(--dim);
-  border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
 </style>

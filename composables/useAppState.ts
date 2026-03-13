@@ -69,6 +69,11 @@ const isLightboxOpen = ref(false)
 /** src base64 dell'immagine mostrata nel lightbox */
 const lightboxSrc = ref('')
 
+// ── Gist Settings ─────────────────────────────────────────────────────────────
+
+/** true quando il modal delle impostazioni Gist è aperto */
+const isGistSettingsOpen = ref(false)
+
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPUTED
 // ─────────────────────────────────────────────────────────────────────────────
@@ -131,6 +136,18 @@ function closeLightbox(): void {
   setTimeout(() => { lightboxSrc.value = '' }, 200)
 }
 
+// ── Gist Settings ─────────────────────────────────────────────────────────────
+
+/** Apre il modal delle impostazioni Gist. */
+function openGistSettings(): void {
+  isGistSettingsOpen.value = true
+}
+
+/** Chiude il modal delle impostazioni Gist. */
+function closeGistSettings(): void {
+  isGistSettingsOpen.value = false
+}
+
 // ── Modal ────────────────────────────────────────────────────────────────────
 
 /** Apre il modal per il tipo di attività specificato. */
@@ -163,6 +180,7 @@ export function useAppState() {
     toastMessage,
     isLightboxOpen,
     lightboxSrc,
+    isGistSettingsOpen,
     // computed
     hasOngoing,
     // methods
@@ -174,5 +192,7 @@ export function useAppState() {
     closeLightbox,
     openModal,
     closeModal,
+    openGistSettings,
+    closeGistSettings,
   }
 }

@@ -238,7 +238,6 @@ async function handleSitePhotoInput(e: Event): Promise<void> {
   const compressed = await photo.processFiles(files)
 
   compressed.forEach(b64 => store.addSitePhoto(todayStr(), b64))
-  sitePhotos.value = store.getSitePhotos(todayStr())
   appState.showToast(`${compressed.length} foto cantiere salvata/e`)
 }
 

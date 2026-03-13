@@ -1,20 +1,20 @@
 /**
  * ============================================================
- * useStore – Gestione persistenza localStorage
+ * useStore – Gestione persistenza localStorage + sync Gist
  * ============================================================
  * Tutte le operazioni CRUD sui dati dell'app passano da qui.
- * La chiave "pt_v3" contiene un JSON con struttura:
- *   { activities: [ ...Activity ] }
+ * La chiave "pt_v3" contiene un JSON con struttura StoreData.
  *
- * NOTA SUI LIMITI:
- * localStorage ha un limite di ~5MB per dominio.
- * Le foto compresse (≈100KB l'una) ne occupano la maggior parte.
- * Con ~40 foto/giorno si possono memorizzare circa 2 mesi di dati.
- * Per uso a lungo termine, valutare @capacitor-community/sqlite.
+ * Ogni scrittura locale viene anche schedulata per il push su
+ * GitHub Gist (debounce 2s), se la sincronizzazione è configurata.
+ *
+ * Per avviare la sincronizzazione iniziale al mount dell'app
+ * chiamare initSync() una sola volta.
  */
 
 import { ref } from 'vue'
 import type { Activity, StoreData } from '~/types'
+import { useGistSync } from '~/composables/useGistSync'
 
 /** Chiave localStorage */
 const STORE_KEY = 'pt_v3'
@@ -27,7 +27,12 @@ const STORE_KEY = 'pt_v3'
  */
 const _version = ref(0)
 
+/** Timer debounce per il push su Gist */
+let _pushTimer: ReturnType<typeof setTimeout> | null = null
+
 export function useStore() {
+
+  const gistSync = useGistSync()
 
   // ─────────────────────────────────────────────────────────────────────
   // PRIVATE – Helpers interni
@@ -48,15 +53,67 @@ export function useStore() {
     }
   }
 
-  /** Serializza e salva i dati nel localStorage, poi invalida le computed. */
+  /** Serializza e salva i dati nel localStorage, poi invalida le computed e schedula il push. */
   function _save(data: StoreData): void {
+    data.lastModified = Date.now()
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(data))
       _version.value++ // notifica Vue che i dati sono cambiati
+      _schedulePush(data)
     } catch (e) {
       // QuotaExceededError: localStorage pieno (probabile per le foto base64)
       console.error('[useStore] localStorage pieno:', e)
       alert('Attenzione: memoria locale quasi esaurita. Esporta i dati e cancella le attività vecchie.')
+    }
+  }
+
+  /**
+   * Schedula un push su Gist con debounce di 2s.
+   * Annulla il push precedente se ancora in attesa.
+   */
+  function _schedulePush(data: StoreData): void {
+    if (_pushTimer) clearTimeout(_pushTimer)
+    _pushTimer = setTimeout(() => {
+      if (gistSync.isConfigured()) {
+        gistSync.push(data)
+      }
+    }, 2000)
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // PUBLIC – Sync iniziale
+  // ─────────────────────────────────────────────────────────────────────
+
+  /**
+   * Da chiamare una sola volta al mount dell'app.
+   * Confronta i dati locali con il Gist remoto tramite lastModified:
+   *   - remoto più recente → sovrascrive localStorage e aggiorna la UI
+   *   - locale più recente → push dei dati locali sul Gist
+   *   - nessuna config Gist → no-op
+   */
+  async function initSync(): Promise<void> {
+    if (!gistSync.isConfigured()) return
+
+    const remote = await gistSync.pull()
+    if (!remote) return // errore di rete o config invalida
+
+    try {
+      const rawLocal = localStorage.getItem(STORE_KEY)
+      const local    = rawLocal ? JSON.parse(rawLocal) as StoreData : { activities: [], lastModified: 0 }
+      const remoteTs = remote.lastModified ?? 0
+      const localTs  = local.lastModified  ?? 0
+
+      if (remoteTs > localTs) {
+        // Il remoto è più aggiornato: aggiorna localStorage senza schedulare un push
+        localStorage.setItem(STORE_KEY, JSON.stringify(remote))
+        _version.value++
+      } else if (localTs > remoteTs) {
+        // Il locale è più aggiornato: carica subito sul Gist
+        gistSync.push(local)
+      }
+      // Se uguali non serve fare nulla
+    } catch (e) {
+      console.error('[useStore] Errore durante initSync:', e)
     }
   }
 
@@ -196,6 +253,7 @@ export function useStore() {
   }
 
   return {
+    initSync,
     all,
     forDate,
     forRange,
