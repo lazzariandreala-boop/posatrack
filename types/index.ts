@@ -71,6 +71,45 @@ export interface Activity {
 
   /** Foto scontrini (usate per le attività di tipo "pausa_pranzo") */
   receiptPhotos?: Photo[]
+
+  /** true se l'attività è stata pre-creata da un ordine di lavoro pianificato */
+  isPlanned?: boolean
+
+  /** ID del WorkOrder da cui è stata generata questa attività */
+  workOrderId?: string
+}
+
+/**
+ * Ordine di lavoro pianificato (usato nella sezione Pianificazione, solo desktop).
+ * Viene persistito in localStorage insieme alle attività.
+ */
+export interface WorkOrder {
+  /** ID univoco, formato: "wo_<timestamp>" */
+  id: string
+
+  /** Data di esecuzione pianificata, YYYY-MM-DD */
+  date: string
+
+  /** Numero ordine di lavoro */
+  orderNumber: string
+
+  /** Tipo di attività (no pausa_pranzo) */
+  type: ActivityType
+
+  /** Descrizione/attrezzatura da posare */
+  detail: string
+
+  /** Note aggiuntive */
+  note: string
+
+  /** Durata stimata in giorni (default 1) */
+  estimatedDuration?: number
+
+  /** Ora di inizio pianificata "HH:MM" (opzionale) */
+  startHour?: string
+
+  /** Timestamp Unix ms di creazione */
+  createdAt: number
 }
 
 /** Struttura root del dato in localStorage */
@@ -80,6 +119,8 @@ export interface StoreData {
   dayNotes?:   Record<string, string>
   /** Foto di cantiere giornaliere: chiave = YYYY-MM-DD, valore = array di foto */
   sitePhotos?: Record<string, Photo[]>
+  /** Ordini di lavoro pianificati */
+  workOrders?: WorkOrder[]
   /** Timestamp Unix ms dell'ultima scrittura – usato per conflict resolution con Gist */
   lastModified?: number
 }
@@ -91,7 +132,7 @@ export interface GistConfig {
 }
 
 /** Vista attiva nell'app (navigazione single-page) */
-export type ViewName = 'timer' | 'summary' | 'dashboard'
+export type ViewName = 'timer' | 'summary' | 'dashboard' | 'planning'
 
 /** Metadati visuali per ogni tipo di attività */
 export interface ActivityTypeMeta {

@@ -71,6 +71,23 @@ const { syncStatus, isConfigured } = useGistSync()
         Dashboard
       </button>
 
+      <!-- Tab Pianificazione: solo desktop -->
+      <button
+        class="sidebar-nav-btn"
+        :class="{ active: currentView === 'planning' }"
+        @click="navigate('planning')"
+      >
+        <svg viewBox="0 0 24 24">
+          <rect x="3" y="4" width="18" height="18" rx="2"/>
+          <path d="M16 2v4M8 2v4M3 10h18"/>
+          <line x1="8" y1="14" x2="8" y2="14" stroke-linecap="round" stroke-width="2.5"/>
+          <line x1="12" y1="14" x2="16" y2="14"/>
+          <line x1="8" y1="18" x2="8" y2="18" stroke-linecap="round" stroke-width="2.5"/>
+          <line x1="12" y1="18" x2="16" y2="18"/>
+        </svg>
+        Pianificazione
+      </button>
+
     </nav>
 
     <!-- Impostazioni Gist ────────────────────────────────────────── -->

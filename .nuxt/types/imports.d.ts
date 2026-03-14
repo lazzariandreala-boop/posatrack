@@ -104,6 +104,7 @@ declare global {
   const useExport: typeof import('../../composables/useExport').useExport
   const useFetch: typeof import('../../node_modules/nuxt/dist/app/composables/fetch').useFetch
   const useGeo: typeof import('../../composables/useGeo').useGeo
+  const useGistSync: typeof import('../../composables/useGistSync').useGistSync
   const useHead: typeof import('../../node_modules/nuxt/dist/app/composables/head').useHead
   const useHeadSafe: typeof import('../../node_modules/nuxt/dist/app/composables/head').useHeadSafe
   const useHydration: typeof import('../../node_modules/nuxt/dist/app/composables/hydrate').useHydration
@@ -293,6 +294,7 @@ declare module 'vue' {
     readonly useExport: UnwrapRef<typeof import('../../composables/useExport')['useExport']>
     readonly useFetch: UnwrapRef<typeof import('../../node_modules/nuxt/dist/app/composables/fetch')['useFetch']>
     readonly useGeo: UnwrapRef<typeof import('../../composables/useGeo')['useGeo']>
+    readonly useGistSync: UnwrapRef<typeof import('../../composables/useGistSync')['useGistSync']>
     readonly useHead: UnwrapRef<typeof import('../../node_modules/nuxt/dist/app/composables/head')['useHead']>
     readonly useHeadSafe: UnwrapRef<typeof import('../../node_modules/nuxt/dist/app/composables/head')['useHeadSafe']>
     readonly useHydration: UnwrapRef<typeof import('../../node_modules/nuxt/dist/app/composables/hydrate')['useHydration']>

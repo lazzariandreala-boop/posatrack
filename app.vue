@@ -58,6 +58,7 @@ onUnmounted(() => {
       <TimerView     v-show="currentView === 'timer'" />
       <SummaryView   v-show="currentView === 'summary'" />
       <DashboardView v-show="currentView === 'dashboard'" />
+      <PlanningView  v-show="currentView === 'planning'" />
     </div>
 
     <!-- Bottom nav: visibile solo su mobile ────────────────────── -->

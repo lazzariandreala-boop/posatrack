@@ -46,10 +46,11 @@ function updateClock(): void {
 
 // ── Log attività di oggi ──────────────────────────────────────────────
 
-/** Lista reattiva delle attività di oggi (aggiornata ad ogni cambio store) */
+/** Lista reattiva delle attività di oggi (escluse quelle pianificate non ancora avviate) */
 const todayActivities = computed(() => {
   const today = todayStr()
   return store.forDate(today)
+    .filter(a => !(a.isPlanned && a.duration === 0 && a.id !== current.value?.id))
     .slice()
     .sort((a, b) => b.startTime - a.startTime)
 })
@@ -274,6 +275,55 @@ function saveDayNote(): void {
   store.setDayNote(todayStr(), dayNote.value)
 }
 
+// ── Attività pianificate per oggi ─────────────────────────────────────
+
+/**
+ * Attività pre-create da work order pianificati (isPlanned=true, duration=0).
+ * Appaiono nella sezione "Da fare oggi" separata dal log normale.
+ */
+const plannedTodayActivities = computed(() =>
+  store.forDate(todayStr())
+    .filter(a => a.isPlanned && a.duration === 0 && a.id !== current.value?.id)
+    .sort((a, b) => (a.note > b.note ? 1 : -1))
+)
+
+/**
+ * Avvia un'attività pianificata: acquisce GPS, resetta i timestamp
+ * e la imposta come attività corrente senza aprire il modal.
+ */
+async function startPlannedActivity(a: import('~/types').Activity): Promise<void> {
+  appState.setGpsLoading(true)
+  const location = await geo.get()
+  const nowTs    = Date.now()
+
+  // Termina l'eventuale attività in corso
+  if (appState.currentActivity.value) {
+    const duration = Math.floor((nowTs - appState.currentActivity.value.startTime) / 1000)
+    store.update(appState.currentActivity.value.id, {
+      endTime:  nowTs,
+      endLoc:   location,
+      duration: duration,
+    })
+    timer.stop()
+    appState.currentActivity.value = null
+  }
+
+  // Attiva l'attività pianificata: resetta i campi di timing
+  store.update(a.id, {
+    startTime: nowTs,
+    endTime:   null,
+    duration:  null,
+    startLoc:  location,
+    endLoc:    null,
+  })
+
+  const updated = { ...a, startTime: nowTs, endTime: null, duration: null, startLoc: location, endLoc: null }
+  appState.currentActivity.value = updated
+  appState.setGpsLoading(false)
+  timer.start(nowTs)
+  appState.showToast(`▶ ${ACT[a.type]?.label} avviata`)
+}
+
 // ── Lifecycle ─────────────────────────────────────────────────────────
 onMounted(() => {
   updateClock()
@@ -284,6 +334,12 @@ onMounted(() => {
   if (ongoing && !appState.currentActivity.value) {
     appState.currentActivity.value = ongoing
     timer.start(ongoing.startTime)
+  }
+
+  // Pre-crea attività pianificate per oggi da work orders
+  const created = store.autoCreatePlannedActivities(todayStr())
+  if (created > 0) {
+    appState.showToast(`📋 ${created} lavorazion${created === 1 ? 'e pianificata' : 'i pianificate'} per oggi`)
   }
 })
 
@@ -480,6 +536,49 @@ const gpsText      = computed(() => current.value ? geo.shortFmt(current.value.s
             </div>
 
           </div><!-- /action-grid -->
+        </div>
+
+        <!-- Da fare oggi (attività pianificate non ancora avviate) ─────── -->
+        <div v-if="plannedTodayActivities.length">
+          <div class="slabel">DA FARE OGGI</div>
+          <div class="card">
+            <div class="card-body">
+              <div
+                v-for="a in plannedTodayActivities"
+                :key="a.id"
+                class="log-item planned-item"
+              >
+                <div class="log-dot" :style="{ background: ACT[a.type]?.color ?? '#888' }" />
+                <div class="log-body">
+                  <div class="log-title">
+                    {{ a.detail }}
+                    <span class="planned-badge">📋 Pianificato</span>
+                  </div>
+                  <div class="log-meta">
+                    {{ ACT[a.type]?.label ?? a.type }}
+                    <template v-if="a.orderNumber"> · Ord. <strong>{{ a.orderNumber }}</strong></template>
+                    <template v-if="a.note"> · {{ a.note }}</template>
+                  </div>
+                  <div class="log-actions">
+                    <button class="photo-btn start-btn" @click="startPlannedActivity(a)">
+                      <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
+                        <polygon points="5 3 19 12 5 21 5 3"/>
+                      </svg>
+                      Inizia
+                    </button>
+                    <button class="photo-btn delete-btn" @click="deleteActivity(a.id)">
+                      <svg viewBox="0 0 24 24">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/>
+                      </svg>
+                      Rimuovi
+                    </button>
+                  </div>
+                </div>
+                <div class="log-dur planned-dur">—</div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- Log attività di oggi ────────────────────────────────────── -->
@@ -1044,4 +1143,32 @@ const gpsText      = computed(() => current.value ? geo.shortFmt(current.value.s
 .receipt-btn:hover { border-color: var(--yellow); color: var(--yellow); }
 .resume-btn:hover  { border-color: var(--green); color: var(--green); }
 .delete-btn:hover  { border-color: var(--red); color: var(--red); }
+.start-btn         { border-color: var(--orange); color: var(--orange); }
+.start-btn:hover   { background: rgba(255,95,0,.12); }
+
+/* Attività pianificata (sezione "Da fare oggi") */
+.planned-item {
+  background: rgba(255, 95, 0, .04);
+  border-radius: var(--r-sm);
+  padding: 6px 8px;
+  border: 1px dashed var(--border2);
+  margin-bottom: 4px;
+}
+
+.planned-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--orange);
+  background: rgba(255,95,0,.12);
+  padding: 1px 6px;
+  border-radius: 20px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.planned-dur {
+  color: var(--dim);
+  font-style: italic;
+}
 </style>

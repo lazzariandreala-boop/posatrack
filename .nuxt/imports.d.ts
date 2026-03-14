@@ -31,6 +31,7 @@ export { defineLazyHydrationComponent } from '#app/composables/lazy-hydration';
 export { useAppState } from '../composables/useAppState';
 export { useExport } from '../composables/useExport';
 export { useGeo } from '../composables/useGeo';
+export { useGistSync } from '../composables/useGistSync';
 export { usePhoto } from '../composables/usePhoto';
 export { useStore } from '../composables/useStore';
 export { useTimer } from '../composables/useTimer';

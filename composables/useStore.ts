@@ -13,7 +13,7 @@
  */
 
 import { ref } from 'vue'
-import type { Activity, StoreData } from '~/types'
+import type { Activity, WorkOrder, StoreData } from '~/types'
 import { useGistSync } from '~/composables/useGistSync'
 
 /** Chiave localStorage */
@@ -252,6 +252,92 @@ export function useStore() {
     }
   }
 
+  // ── Ordini di lavoro pianificati ────────────────────────────────────
+
+  /** Ritorna tutti gli ordini di lavoro pianificati. */
+  function getAllWorkOrders(): WorkOrder[] {
+    void _version.value
+    return _load().workOrders ?? []
+  }
+
+  /** Ritorna gli ordini di lavoro per una data specifica (YYYY-MM-DD). */
+  function getWorkOrdersForDate(dateStr: string): WorkOrder[] {
+    return getAllWorkOrders().filter(wo => wo.date === dateStr)
+  }
+
+  /** Aggiunge un ordine di lavoro. */
+  function addWorkOrder(wo: WorkOrder): void {
+    const data = _load()
+    if (!data.workOrders) data.workOrders = []
+    data.workOrders.push(wo)
+    _save(data)
+  }
+
+  /** Aggiorna i campi di un ordine di lavoro esistente tramite id. */
+  function updateWorkOrder(id: string, fields: Partial<WorkOrder>): void {
+    const data = _load()
+    const idx = (data.workOrders ?? []).findIndex(wo => wo.id === id)
+    if (idx !== -1) {
+      Object.assign(data.workOrders![idx], fields)
+      _save(data)
+    }
+  }
+
+  /** Rimuove un ordine di lavoro per id. */
+  function removeWorkOrder(id: string): void {
+    const data = _load()
+    if (data.workOrders) {
+      data.workOrders = data.workOrders.filter(wo => wo.id !== id)
+      _save(data)
+    }
+  }
+
+  /**
+   * Pre-crea attività pianificate per la giornata odierna da work orders non ancora attivati.
+   * Ritorna il numero di attività create.
+   * Da chiamare al mount del TimerView.
+   */
+  function autoCreatePlannedActivities(todayStr: string): number {
+    const data = _load()
+    const todayOrders = (data.workOrders ?? []).filter(wo => wo.date === todayStr)
+    if (!todayOrders.length) return 0
+
+    // Trova i work order già convertiti in attività pianificate per oggi
+    const existingWoIds = new Set(
+      data.activities
+        .filter(a => a.date === todayStr && a.isPlanned && a.workOrderId)
+        .map(a => a.workOrderId!)
+    )
+
+    let created = 0
+    for (const wo of todayOrders) {
+      if (!existingWoIds.has(wo.id)) {
+        const nowTs = Date.now() + created // evita id duplicati se creati nello stesso ms
+        const activity: Activity = {
+          id:          `act_${nowTs}`,
+          type:        wo.type,
+          detail:      wo.detail,
+          note:        wo.note,
+          date:        todayStr,
+          startTime:   nowTs,
+          endTime:     nowTs,    // duration = 0: pre-compilata, non ancora avviata
+          startLoc:    null,
+          endLoc:      null,
+          duration:    0,
+          photos:      [],
+          orderNumber: wo.orderNumber || undefined,
+          isPlanned:   true,
+          workOrderId: wo.id,
+        }
+        data.activities.push(activity)
+        created++
+      }
+    }
+
+    if (created > 0) _save(data)
+    return created
+  }
+
   return {
     initSync,
     all,
@@ -271,5 +357,11 @@ export function useStore() {
     getSitePhotos,
     addSitePhoto,
     removeSitePhoto,
+    getAllWorkOrders,
+    getWorkOrdersForDate,
+    addWorkOrder,
+    updateWorkOrder,
+    removeWorkOrder,
+    autoCreatePlannedActivities,
   }
 }

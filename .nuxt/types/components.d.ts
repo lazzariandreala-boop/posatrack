@@ -21,6 +21,8 @@ interface _GlobalComponents {
   AppSidebar: typeof import("../../components/AppSidebar.vue")['default']
   AppToast: typeof import("../../components/AppToast.vue")['default']
   DashboardView: typeof import("../../components/DashboardView.vue")['default']
+  GistSettingsModal: typeof import("../../components/GistSettingsModal.vue")['default']
+  PlanningView: typeof import("../../components/PlanningView.vue")['default']
   SummaryView: typeof import("../../components/SummaryView.vue")['default']
   TimerView: typeof import("../../components/TimerView.vue")['default']
   NuxtWelcome: typeof import("../../node_modules/nuxt/dist/app/components/welcome.vue")['default']
@@ -53,6 +55,8 @@ interface _GlobalComponents {
   LazyAppSidebar: LazyComponent<typeof import("../../components/AppSidebar.vue")['default']>
   LazyAppToast: LazyComponent<typeof import("../../components/AppToast.vue")['default']>
   LazyDashboardView: LazyComponent<typeof import("../../components/DashboardView.vue")['default']>
+  LazyGistSettingsModal: LazyComponent<typeof import("../../components/GistSettingsModal.vue")['default']>
+  LazyPlanningView: LazyComponent<typeof import("../../components/PlanningView.vue")['default']>
   LazySummaryView: LazyComponent<typeof import("../../components/SummaryView.vue")['default']>
   LazyTimerView: LazyComponent<typeof import("../../components/TimerView.vue")['default']>
   LazyNuxtWelcome: LazyComponent<typeof import("../../node_modules/nuxt/dist/app/components/welcome.vue")['default']>
