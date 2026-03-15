@@ -102,11 +102,23 @@ export interface WorkOrder {
   /** Note aggiuntive */
   note: string
 
-  /** Durata stimata in giorni (default 1) */
+  /** Durata stimata in giorni (default 1, usato solo per retrocompatibilità Gantt) */
   estimatedDuration?: number
+
+  /** Durata stimata del lavoro in minuti (es. 150 = 2h 30m) */
+  estimatedTime?: number
 
   /** Ora di inizio pianificata "HH:MM" (opzionale) */
   startHour?: string
+
+  /** ID gruppo per lavorazioni multi-giorno (es. "grp_<timestamp>") */
+  groupId?: string
+
+  /** Indice giorno all'interno del gruppo (1-based, es. 1 di 3) */
+  dayIndex?: number
+
+  /** Totale giorni del gruppo */
+  totalDays?: number
 
   /** Timestamp Unix ms di creazione */
   createdAt: number

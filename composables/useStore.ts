@@ -292,6 +292,15 @@ export function useStore() {
     }
   }
 
+  /** Rimuove tutti gli ordini di lavoro appartenenti a un gruppo (lavorazione multi-giorno). */
+  function removeWorkOrderGroup(groupId: string): void {
+    const data = _load()
+    if (data.workOrders) {
+      data.workOrders = data.workOrders.filter(wo => wo.groupId !== groupId)
+      _save(data)
+    }
+  }
+
   /**
    * Pre-crea attività pianificate per la giornata odierna da work orders non ancora attivati.
    * Ritorna il numero di attività create.
@@ -362,6 +371,7 @@ export function useStore() {
     addWorkOrder,
     updateWorkOrder,
     removeWorkOrder,
+    removeWorkOrderGroup,
     autoCreatePlannedActivities,
   }
 }

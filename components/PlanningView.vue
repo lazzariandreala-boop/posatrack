@@ -7,7 +7,7 @@
  *   Sinistra: calendario mensile + form aggiunta/modifica ordine
  *   Destra:   lista ordini del giorno selezionato + Gantt 3 settimane
  */
-import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed } from 'vue'
 import { useStore }    from '~/composables/useStore'
 import { useAppState } from '~/composables/useAppState'
 import { ACT, CATALOG, MONTHS_IT } from '~/constants'
@@ -24,6 +24,35 @@ function toDateStr(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 const todayStr = toDateStr(new Date())
+
+// ── Calcolo giorni lavorativi consecutivi (Lun–Ven) ───────────────────
+/**
+ * Ritorna `count` date (YYYY-MM-DD) di giorni lavorativi (Lun–Ven)
+ * a partire da `startDateStr` (inclusa, saltando Sab/Dom).
+ */
+function getWorkingDays(startDateStr: string, count: number): string[] {
+  const result: string[] = []
+  const [y, m, d] = startDateStr.split('-').map(Number)
+  const date = new Date(y, m - 1, d)
+  while (result.length < count) {
+    const dow = date.getDay() // 0=Dom, 6=Sab
+    if (dow !== 0 && dow !== 6) {
+      result.push(toDateStr(date))
+    }
+    date.setDate(date.getDate() + 1)
+  }
+  return result
+}
+
+/** Formatta minuti stimati → "~2h 30m" */
+function fmtEstimatedTime(minutes: number): string {
+  if (!minutes) return ''
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  if (h > 0 && m > 0) return `~${h}h ${m}m`
+  if (h > 0) return `~${h}h`
+  return `~${m}m`
+}
 
 // ── Calendario mensile ────────────────────────────────────────────────
 const calYear  = ref(new Date().getFullYear())
@@ -87,13 +116,15 @@ function fmtDate(dateStr: string): string {
 const showForm     = ref(false)
 const editingId    = ref<string | null>(null)
 const formData     = ref({
-  orderNumber: '',
-  type:        'posa' as ActivityType,
-  detail:      '',
-  note:        '',
-  date:        todayStr,
+  orderNumber:       '',
+  type:              'posa' as ActivityType,
+  detail:            '',
+  note:              '',
+  date:              todayStr,
   estimatedDuration: 1,
-  startHour:   '',
+  startHour:         '',
+  estimatedTimeH:    0,   // ore stimate per compiere il lavoro
+  estimatedTimeM:    0,   // minuti stimati
 })
 
 const planningTypes = ['posa', 'trasferimento', 'altro'] as const
@@ -105,27 +136,32 @@ const catalogOptions = computed(() =>
 function openAddForm(): void {
   editingId.value = null
   formData.value  = {
-    orderNumber: '',
-    type:        'posa',
-    detail:      '',
-    note:        '',
-    date:        selectedDate.value,
+    orderNumber:       '',
+    type:              'posa',
+    detail:            '',
+    note:              '',
+    date:              selectedDate.value,
     estimatedDuration: 1,
-    startHour:   '',
+    startHour:         '',
+    estimatedTimeH:    0,
+    estimatedTimeM:    0,
   }
   showForm.value = true
 }
 
 function openEditForm(wo: WorkOrder): void {
   editingId.value = wo.id
+  const et = wo.estimatedTime ?? 0
   formData.value  = {
     orderNumber:       wo.orderNumber,
     type:              wo.type as typeof planningTypes[number],
     detail:            wo.detail,
     note:              wo.note,
     date:              wo.date,
-    estimatedDuration: wo.estimatedDuration ?? 1,
+    estimatedDuration: 1, // in modifica si agisce sul singolo giorno
     startHour:         wo.startHour ?? '',
+    estimatedTimeH:    Math.floor(et / 60),
+    estimatedTimeM:    et % 60,
   }
   showForm.value = true
 }
@@ -145,208 +181,254 @@ function saveForm(): void {
     return
   }
 
+  const estimatedTime = (formData.value.estimatedTimeH * 60) + formData.value.estimatedTimeM
+
   if (editingId.value) {
     store.updateWorkOrder(editingId.value, {
-      orderNumber:       formData.value.orderNumber.trim(),
-      type:              formData.value.type,
-      detail:            formData.value.detail.trim(),
-      note:              formData.value.note.trim(),
-      date:              formData.value.date,
-      estimatedDuration: formData.value.estimatedDuration,
-      startHour:         formData.value.startHour || undefined,
+      orderNumber:   formData.value.orderNumber.trim(),
+      type:          formData.value.type,
+      detail:        formData.value.detail.trim(),
+      note:          formData.value.note.trim(),
+      date:          formData.value.date,
+      startHour:     formData.value.startHour || undefined,
+      estimatedTime: estimatedTime || undefined,
     })
     appState.showToast('Pianificazione aggiornata')
   } else {
     const nowTs = Date.now()
-    store.addWorkOrder({
-      id:                `wo_${nowTs}`,
-      orderNumber:       formData.value.orderNumber.trim(),
-      type:              formData.value.type,
-      detail:            formData.value.detail.trim(),
-      note:              formData.value.note.trim(),
-      date:              formData.value.date,
-      estimatedDuration: formData.value.estimatedDuration,
-      startHour:         formData.value.startHour || undefined,
-      createdAt:         nowTs,
-    })
-    appState.showToast('Lavorazione pianificata')
-    // Aggiorna il mese del calendario se la data scelta è diversa dal mese corrente
+    const dur   = Math.max(1, formData.value.estimatedDuration)
+
+    if (dur > 1) {
+      // Crea un ordine per ogni giorno lavorativo (Lun–Ven)
+      const groupId = `grp_${nowTs}`
+      const dates   = getWorkingDays(formData.value.date, dur)
+      dates.forEach((date, idx) => {
+        store.addWorkOrder({
+          id:            `wo_${nowTs + idx}`,
+          orderNumber:   formData.value.orderNumber.trim(),
+          type:          formData.value.type,
+          detail:        formData.value.detail.trim(),
+          note:          formData.value.note.trim(),
+          date,
+          estimatedDuration: 1,
+          estimatedTime: estimatedTime || undefined,
+          startHour:     formData.value.startHour || undefined,
+          groupId,
+          dayIndex:      idx + 1,
+          totalDays:     dur,
+          createdAt:     nowTs + idx,
+        })
+      })
+      appState.showToast(`Lavorazione pianificata su ${dur} giorni (Lun–Ven)`)
+    } else {
+      store.addWorkOrder({
+        id:            `wo_${nowTs}`,
+        orderNumber:   formData.value.orderNumber.trim(),
+        type:          formData.value.type,
+        detail:        formData.value.detail.trim(),
+        note:          formData.value.note.trim(),
+        date:          formData.value.date,
+        estimatedDuration: 1,
+        estimatedTime: estimatedTime || undefined,
+        startHour:     formData.value.startHour || undefined,
+        createdAt:     nowTs,
+      })
+      appState.showToast('Lavorazione pianificata')
+    }
+
+    // Aggiorna il mese del calendario alla data della prima giornata
     const [y, m] = formData.value.date.split('-').map(Number)
-    calYear.value  = y
-    calMonth.value = m - 1
+    calYear.value      = y
+    calMonth.value     = m - 1
     selectedDate.value = formData.value.date
   }
 
   showForm.value  = false
   editingId.value = null
-  nextTick(() => renderGantt())
 }
 
-function deleteOrder(id: string): void {
+// ── Spostamento ordine ────────────────────────────────────────────────
+const movingOrderId  = ref<string | null>(null)
+const moveTargetDate = ref('')
+
+function startMove(wo: WorkOrder): void {
+  movingOrderId.value  = wo.id
+  moveTargetDate.value = wo.date
+}
+
+function confirmMove(): void {
+  if (!movingOrderId.value || !moveTargetDate.value) return
+  store.updateWorkOrder(movingOrderId.value, { date: moveTargetDate.value })
+  // Naviga al giorno di destinazione nel calendario
+  const [y, m] = moveTargetDate.value.split('-').map(Number)
+  calYear.value      = y
+  calMonth.value     = m - 1
+  selectedDate.value = moveTargetDate.value
+  movingOrderId.value = null
+  appState.showToast('Lavorazione spostata')
+}
+
+function cancelMove(): void {
+  movingOrderId.value = null
+}
+
+// ── Eliminazione ordine (singolo o intero gruppo) ─────────────────────
+function deleteOrder(wo: WorkOrder): void {
+  if (wo.groupId) {
+    const groupCount = store.getAllWorkOrders().filter(o => o.groupId === wo.groupId).length
+    if (groupCount > 1) {
+      const deleteAll = confirm(
+        `Questa è la giornata ${wo.dayIndex ?? '?'} di ${wo.totalDays ?? groupCount} di una lavorazione multi-giorno.\n\n` +
+        `Premi OK per eliminare TUTTA la pianificazione (${groupCount} giorni)\n` +
+        `Premi Annulla per eliminare solo questo giorno`
+      )
+      if (deleteAll) {
+        store.removeWorkOrderGroup(wo.groupId)
+        appState.showToast('Pianificazione eliminata')
+        return
+      }
+      // Se ha premuto Annulla, chiede conferma per eliminare solo questo giorno
+      if (!confirm('Eliminare solo questo giorno?')) return
+      store.removeWorkOrder(wo.id)
+      appState.showToast('Giorno eliminato')
+      return
+    }
+  }
   if (!confirm('Eliminare questa pianificazione?')) return
-  store.removeWorkOrder(id)
+  store.removeWorkOrder(wo.id)
   appState.showToast('Pianificazione eliminata')
-  nextTick(() => renderGantt())
 }
 
-// ── Gantt chart ───────────────────────────────────────────────────────
-const ganttCanvas = ref<HTMLCanvasElement | null>(null)
-let   ganttChart: any = null
+// ── Gantt HTML interattivo ─────────────────────────────────────────────
+const GANTT_DAYS = 21   // 3 settimane
+const DAY_NAMES  = ['Dom','Lun','Mar','Mer','Gio','Ven','Sab']
 
-/** Inizio finestra Gantt: lunedì della settimana corrente */
+/** Lunedì della settimana corrente (00:00:00) */
 function ganttStart(): Date {
   const d = new Date()
   d.setHours(0, 0, 0, 0)
-  const dow = (d.getDay() + 6) % 7 // 0=Lun
+  const dow = (d.getDay() + 6) % 7
   d.setDate(d.getDate() - dow)
   return d
 }
-const GANTT_DAYS = 21 // 3 settimane
 
-function dayOffset(dateStr: string): number {
-  const [y, m, d] = dateStr.split('-').map(Number)
-  const date  = new Date(y, m - 1, d)
+/** Array di 21 oggetti giorno per le intestazioni del Gantt */
+const ganttDays = computed(() => {
   const start = ganttStart()
-  return Math.round((date.getTime() - start.getTime()) / 86_400_000)
-}
+  return Array.from({ length: GANTT_DAYS }, (_, i) => {
+    const d = new Date(start)
+    d.setDate(d.getDate() + i)
+    const dow = d.getDay()
+    return {
+      dateStr:   toDateStr(d),
+      num:       d.getDate(),
+      name:      DAY_NAMES[dow],
+      isToday:   toDateStr(d) === todayStr,
+      isWeekend: dow === 0 || dow === 6,
+    }
+  })
+})
 
-/** Ordini nella finestra Gantt */
-const ganttOrders = computed(() => {
+/** Ordini nella finestra Gantt (le 3 settimane) */
+const ganttWindowOrders = computed(() => {
   const start = ganttStart()
   const end   = new Date(start)
   end.setDate(end.getDate() + GANTT_DAYS)
   const s = toDateStr(start)
-  const e = toDateStr(end)
-  return store.getAllWorkOrders()
-    .filter(wo => wo.date >= s && wo.date <= e)
-    .sort((a, b) => a.date.localeCompare(b.date))
+  const e = toDateStr(new Date(end.getTime() - 86_400_000))
+  return store.getAllWorkOrders().filter(wo => wo.date >= s && wo.date <= e)
 })
 
-async function renderGantt(): Promise<void> {
-  if (!ganttCanvas.value) return
+/**
+ * Righe del Gantt: raggruppa WorkOrder dello stesso gruppo (groupId)
+ * o singoli ordini. Ogni riga ha una mappa dateStr→WorkOrder.
+ */
+interface GanttRow {
+  key:          string
+  label:        string
+  color:        string
+  ordersByDate: Record<string, WorkOrder>
+}
 
-  // Lazy-load Chart.js
-  if (!ganttChart) {
-    const mod = await import('chart.js')
-    mod.Chart.register(
-      mod.CategoryScale,
-      mod.LinearScale,
-      mod.BarElement,
-      mod.Tooltip,
-    )
-    // Prima renderizzazione: crea l'istanza
-    ganttChart = _buildChart(mod.Chart)
+const ganttRows = computed((): GanttRow[] => {
+  const rowMap = new Map<string, GanttRow>()
+  for (const wo of ganttWindowOrders.value) {
+    const key = wo.groupId ?? wo.id
+    if (!rowMap.has(key)) {
+      const raw = `${wo.orderNumber} – ${wo.detail}`
+      rowMap.set(key, {
+        key,
+        label:        raw.length > 36 ? raw.substring(0, 34) + '…' : raw,
+        color:        ACT[wo.type]?.color ?? '#888',
+        ordersByDate: {},
+      })
+    }
+    rowMap.get(key)!.ordersByDate[wo.date] = wo
+  }
+  // Ordina per la prima data della riga
+  return Array.from(rowMap.values()).sort((a, b) => {
+    const aFirst = Object.keys(a.ordersByDate).sort()[0] ?? ''
+    const bFirst = Object.keys(b.ordersByDate).sort()[0] ?? ''
+    return aFirst.localeCompare(bFirst)
+  })
+})
+
+// Blocco selezionato nel Gantt (per spostarlo)
+const selectedGanttBlock = ref<WorkOrder | null>(null)
+const ganttMoveDate       = ref('')
+
+function selectGanttBlock(wo: WorkOrder): void {
+  if (selectedGanttBlock.value?.id === wo.id) {
+    selectedGanttBlock.value = null
     return
   }
-
-  // Aggiorna dati senza ricreare il canvas
-  const orders = ganttOrders.value
-  ganttChart.data.labels   = _ganttLabels(orders)
-  ganttChart.data.datasets[0].data             = _ganttData(orders)
-  ganttChart.data.datasets[0].backgroundColor  = _ganttBg(orders)
-  ganttChart.data.datasets[0].borderColor      = _ganttColors(orders)
-  ganttChart.update()
+  selectedGanttBlock.value = wo
+  ganttMoveDate.value      = wo.date
 }
 
-function _ganttLabels(orders: WorkOrder[]): string[] {
-  return orders.map(wo => {
-    const label = `${wo.orderNumber} – ${wo.detail}`
-    return label.length > 32 ? label.substring(0, 30) + '…' : label
-  })
-}
-function _ganttData(orders: WorkOrder[]): [number, number][] {
-  return orders.map(wo => {
-    const s = dayOffset(wo.date)
-    return [s, s + (wo.estimatedDuration ?? 1)]
-  })
-}
-function _ganttColors(orders: WorkOrder[]): string[] {
-  return orders.map(wo => ACT[wo.type]?.color ?? '#888')
-}
-function _ganttBg(orders: WorkOrder[]): string[] {
-  return _ganttColors(orders).map(c => c + 'BB')
+/** Click su cella vuota mentre un blocco è selezionato → sposta subito */
+function quickMoveGanttBlock(dateStr: string): void {
+  if (!selectedGanttBlock.value) return
+  store.updateWorkOrder(selectedGanttBlock.value.id, { date: dateStr })
+  appState.showToast('Lavorazione spostata')
+  selectedGanttBlock.value = null
 }
 
-function _buildChart(ChartClass: any): any {
-  const orders  = ganttOrders.value
-  const start   = ganttStart()
-
-  return new ChartClass(ganttCanvas.value!, {
-    type: 'bar',
-    data: {
-      labels:   _ganttLabels(orders),
-      datasets: [{
-        label:           'Lavorazioni',
-        data:            _ganttData(orders),
-        backgroundColor: _ganttBg(orders),
-        borderColor:     _ganttColors(orders),
-        borderWidth:     1,
-        borderRadius:    4,
-      }],
-    },
-    options: {
-      indexAxis:             'y',
-      responsive:            true,
-      maintainAspectRatio:   false,
-      animation:             { duration: 200 },
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: (ctx: any) => {
-              const wo = orders[ctx.dataIndex]
-              if (!wo) return ''
-              const s = new Date(start); s.setDate(s.getDate() + ctx.raw[0])
-              const e = new Date(start); e.setDate(e.getDate() + ctx.raw[1] - 1)
-              const fmt = (d: Date) => `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`
-              const range = ctx.raw[1] - ctx.raw[0] > 1 ? ` → ${fmt(e)}` : ''
-              return ` ${fmt(s)}${range}  ·  Ord. ${wo.orderNumber}`
-            },
-          },
-        },
-      },
-      scales: {
-        x: {
-          type:  'linear',
-          min:   0,
-          max:   GANTT_DAYS,
-          grid:  { color: '#2E2E2E' },
-          ticks: {
-            color:        '#7A7A7A',
-            maxRotation:  0,
-            stepSize:     1,
-            callback: (value: any) => {
-              if (!Number.isInteger(value) || value < 0 || value > GANTT_DAYS) return ''
-              const d = new Date(start); d.setDate(d.getDate() + value)
-              // Mostra: primo del mese sempre, poi ogni 2 giorni
-              if (d.getDate() === 1 || value % 2 === 0) {
-                return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`
-              }
-              return ''
-            },
-          },
-        },
-        y: {
-          grid:  { color: '#2E2E2E' },
-          ticks: {
-            color: '#F0F0F0',
-            font:  { size: 11 },
-          },
-        },
-      },
-    },
-  } as any)
+/** Conferma lo spostamento tramite input date nella toolbar */
+function confirmGanttMove(): void {
+  if (!selectedGanttBlock.value || !ganttMoveDate.value) return
+  store.updateWorkOrder(selectedGanttBlock.value.id, { date: ganttMoveDate.value })
+  appState.showToast('Lavorazione spostata')
+  selectedGanttBlock.value = null
 }
 
-// Striscia verticale "oggi" nel Gantt (plugin inline)
-// Ridisegna il Gantt quando cambiano gli ordini
-watch(ganttOrders, () => nextTick(() => renderGantt()))
-
-onMounted(() => nextTick(() => renderGantt()))
-
-onUnmounted(() => {
-  if (ganttChart) { ganttChart.destroy(); ganttChart = null }
+/** Preview delle date lavorative generate dalla durata impostata nel form */
+const durationPreviewDates = computed(() => {
+  if (!formData.value.date || formData.value.estimatedDuration <= 1) return []
+  return getWorkingDays(formData.value.date, formData.value.estimatedDuration)
 })
+
+function fmtShortDate(dateStr: string): string {
+  const [, m, d] = dateStr.split('-').map(Number)
+  const days = ['Dom','Lun','Mar','Mer','Gio','Ven','Sab']
+  const months = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic']
+  const date = new Date(parseInt(dateStr.split('-')[0]), m - 1, d)
+  return `${days[date.getDay()]} ${d} ${months[m - 1]}`
+}
+
+function clearGanttBlock(): void {
+  selectedGanttBlock.value = null
+}
+
+/** Gestisce click su cella Gantt: seleziona blocco o sposta quello selezionato */
+function handleGanttCellClick(row: GanttRow, dateStr: string): void {
+  const wo = row.ordersByDate[dateStr]
+  if (wo) {
+    selectGanttBlock(wo)
+  } else if (selectedGanttBlock.value) {
+    quickMoveGanttBlock(dateStr)
+  }
+}
 </script>
 
 <template>
@@ -468,25 +550,94 @@ onUnmounted(() => {
               placeholder="Descrizione del lavoro..."
             />
 
-            <!-- Data + Ora inizio (riga) -->
+            <!-- Data + Ora inizio -->
             <div class="field-row">
               <div style="flex:1">
-                <label class="field-label">Data *</label>
+                <label class="field-label">Data inizio *</label>
                 <input v-model="formData.date" class="field-input" type="date" />
               </div>
               <div style="flex:1">
                 <label class="field-label">Ora inizio (opz.)</label>
                 <input v-model="formData.startHour" class="field-input" type="time" />
               </div>
-              <div style="width:100px">
-                <label class="field-label">Giorni</label>
+            </div>
+
+            <!-- Durata in giorni lavorativi (solo in aggiunta) -->
+            <div v-if="!editingId" class="duration-block">
+              <label class="field-label">Durata lavorazione</label>
+              <div class="duration-row">
+                <button
+                  type="button"
+                  class="dur-btn"
+                  @click="formData.estimatedDuration = Math.max(1, formData.estimatedDuration - 1)"
+                >−</button>
                 <input
                   v-model.number="formData.estimatedDuration"
-                  class="field-input"
+                  class="field-input dur-input"
                   type="number"
                   min="1"
                   max="30"
                 />
+                <button
+                  type="button"
+                  class="dur-btn"
+                  @click="formData.estimatedDuration = Math.min(30, formData.estimatedDuration + 1)"
+                >+</button>
+                <span class="dur-label">
+                  {{ formData.estimatedDuration === 1 ? 'giorno lavorativo' : 'giorni lavorativi (Lun–Ven)' }}
+                </span>
+              </div>
+
+              <!-- Preview date generate -->
+              <div v-if="formData.estimatedDuration > 1 && durationPreviewDates.length" class="duration-preview">
+                <div class="duration-preview-title">Giornate che verranno create:</div>
+                <div class="duration-preview-dates">
+                  <span
+                    v-for="(d, i) in durationPreviewDates"
+                    :key="d"
+                    class="duration-preview-chip"
+                  >{{ i + 1 }}. {{ fmtShortDate(d) }}</span>
+                </div>
+                <div class="duration-preview-note">
+                  Ogni giornata apparirà nel Gantt come blocco separato spostabile indipendentemente.
+                </div>
+              </div>
+            </div>
+
+            <!-- Badge info quando si sta modificando un ordine di un gruppo -->
+            <div v-if="editingId" class="editing-single-day-note">
+              ℹ Stai modificando questa singola giornata. Per cambiare la data usa il pulsante Sposta nel Gantt.
+            </div>
+
+            <!-- Stima tempistiche -->
+            <label class="field-label">Stima tempo di esecuzione</label>
+            <div class="field-row">
+              <div style="flex:1">
+                <input
+                  v-model.number="formData.estimatedTimeH"
+                  class="field-input"
+                  type="number"
+                  min="0"
+                  max="23"
+                  placeholder="Ore"
+                />
+              </div>
+              <div style="flex:1">
+                <input
+                  v-model.number="formData.estimatedTimeM"
+                  class="field-input"
+                  type="number"
+                  min="0"
+                  max="59"
+                  step="15"
+                  placeholder="Minuti"
+                />
+              </div>
+              <div style="flex:1; display:flex; align-items:center; font-size:12px; color:var(--muted); padding-top:2px;">
+                <span v-if="formData.estimatedTimeH || formData.estimatedTimeM">
+                  {{ fmtEstimatedTime(formData.estimatedTimeH * 60 + formData.estimatedTimeM) }}
+                </span>
+                <span v-else style="color:var(--dim)">Ore · Minuti</span>
               </div>
             </div>
 
@@ -546,26 +697,61 @@ onUnmounted(() => {
                 <div class="order-bar" :style="{ background: ACT[wo.type]?.color ?? '#888' }" />
 
                 <div class="order-body">
-                  <div class="order-title">{{ wo.detail }}</div>
+                  <div class="order-title">
+                    {{ wo.detail }}
+                    <!-- Badge giorno X/Y per lavorazioni multi-giorno -->
+                    <span
+                      v-if="wo.groupId && wo.totalDays && wo.totalDays > 1"
+                      class="day-badge"
+                    >Giorno {{ wo.dayIndex }}/{{ wo.totalDays }}</span>
+                  </div>
                   <div class="order-meta">
                     <span class="order-type-badge" :style="{ background: (ACT[wo.type]?.color ?? '#888') + '33', color: ACT[wo.type]?.color ?? '#888' }">
                       {{ ACT[wo.type]?.emoji }} {{ ACT[wo.type]?.label }}
                     </span>
                     <span>Ord. <strong>{{ wo.orderNumber }}</strong></span>
-                    <span v-if="wo.startHour">{{ wo.startHour }}</span>
-                    <span v-if="(wo.estimatedDuration ?? 1) > 1">{{ wo.estimatedDuration }} giorni</span>
+                    <span v-if="wo.startHour">🕐 {{ wo.startHour }}</span>
+                    <span v-if="wo.estimatedTime" class="time-estimate-chip">
+                      ⏱ {{ fmtEstimatedTime(wo.estimatedTime) }}
+                    </span>
                   </div>
                   <div v-if="wo.note" class="order-note">{{ wo.note }}</div>
+
+                  <!-- Form inline Sposta -->
+                  <div v-if="movingOrderId === wo.id" class="move-form">
+                    <input
+                      v-model="moveTargetDate"
+                      class="field-input move-date-input"
+                      type="date"
+                    />
+                    <button class="btn btn-move-confirm" @click="confirmMove">Conferma</button>
+                    <button class="btn btn-ghost btn-move-cancel" @click="cancelMove">✕</button>
+                  </div>
                 </div>
 
                 <div class="order-actions">
+                  <!-- Sposta -->
+                  <button
+                    class="icon-btn"
+                    title="Sposta ad altro giorno"
+                    :class="{ 'icon-btn-active': movingOrderId === wo.id }"
+                    @click="movingOrderId === wo.id ? cancelMove() : startMove(wo)"
+                  >
+                    <svg viewBox="0 0 24 24">
+                      <rect x="3" y="4" width="18" height="18" rx="2"/>
+                      <path d="M16 2v4M8 2v4M3 10h18"/>
+                      <path d="M8 14h4m0 0l-2-2m2 2l-2 2"/>
+                    </svg>
+                  </button>
+                  <!-- Modifica -->
                   <button class="icon-btn" title="Modifica" @click="openEditForm(wo)">
                     <svg viewBox="0 0 24 24">
                       <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
                       <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
                     </svg>
                   </button>
-                  <button class="icon-btn icon-btn-danger" title="Elimina" @click="deleteOrder(wo.id)">
+                  <!-- Elimina -->
+                  <button class="icon-btn icon-btn-danger" title="Elimina" @click="deleteOrder(wo)">
                     <svg viewBox="0 0 24 24">
                       <polyline points="3 6 5 6 21 6"/>
                       <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6"/>
@@ -578,12 +764,36 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- Gantt 3 settimane ───────────────────────────────────────── -->
+        <!-- Gantt HTML interattivo ─────────────────────────────────── -->
         <div>
-          <div class="slabel">GANTT – PROSSIME 3 SETTIMANE</div>
+          <div class="slabel">
+            GANTT – PROSSIME 3 SETTIMANE
+            <span v-if="selectedGanttBlock" class="gantt-hint">
+              Blocco selezionato: clicca una cella vuota per spostarlo
+            </span>
+          </div>
+
+          <!-- Toolbar spostamento da input date -->
+          <div v-if="selectedGanttBlock" class="gantt-move-toolbar">
+            <span class="gantt-move-label">
+              ✂ Sposta
+              <strong>{{ selectedGanttBlock.detail }}</strong>
+              <span v-if="selectedGanttBlock.totalDays && selectedGanttBlock.totalDays > 1">
+                (Giorno {{ selectedGanttBlock.dayIndex }}/{{ selectedGanttBlock.totalDays }})
+              </span>
+            </span>
+            <input
+              v-model="ganttMoveDate"
+              type="date"
+              class="gantt-move-input"
+            />
+            <button class="gantt-move-confirm" @click="confirmGanttMove">Sposta</button>
+            <button class="gantt-move-cancel" @click="clearGanttBlock">✕</button>
+          </div>
+
           <div class="card gantt-card">
             <div
-              v-if="!ganttOrders.length"
+              v-if="!ganttWindowOrders.length"
               class="empty"
               style="padding: 40px 0"
             >
@@ -595,12 +805,70 @@ onUnmounted(() => {
               <h3>Nessuna lavorazione pianificata</h3>
               <p>Le lavorazioni nelle prossime 3 settimane appariranno qui</p>
             </div>
-            <div
-              v-else
-              class="gantt-wrap"
-              :style="{ height: Math.max(120, ganttOrders.length * 40 + 60) + 'px' }"
-            >
-              <canvas ref="ganttCanvas" />
+
+            <!-- Griglia Gantt -->
+            <div v-else class="gantt-grid-wrap">
+              <!-- Header giorni -->
+              <div class="gantt-header-row">
+                <div class="gantt-label-cell gantt-label-header">Lavorazione</div>
+                <div
+                  v-for="day in ganttDays"
+                  :key="day.dateStr"
+                  class="gantt-day-header"
+                  :class="{
+                    'gantt-day-today':   day.isToday,
+                    'gantt-day-weekend': day.isWeekend,
+                  }"
+                >
+                  <div class="gantt-day-name">{{ day.name }}</div>
+                  <div class="gantt-day-num">{{ day.num }}</div>
+                </div>
+              </div>
+
+              <!-- Righe lavorazioni -->
+              <div
+                v-for="row in ganttRows"
+                :key="row.key"
+                class="gantt-row"
+              >
+                <!-- Label -->
+                <div class="gantt-label-cell" :title="row.label">
+                  <div
+                    class="gantt-row-dot"
+                    :style="{ background: row.color }"
+                  />
+                  <span class="gantt-row-label">{{ row.label }}</span>
+                </div>
+
+                <!-- Celle giornaliere -->
+                <div
+                  v-for="day in ganttDays"
+                  :key="day.dateStr"
+                  class="gantt-cell"
+                  :class="{
+                    'gantt-cell-today':   day.isToday,
+                    'gantt-cell-weekend': day.isWeekend,
+                    'gantt-cell-droptarget': selectedGanttBlock && !row.ordersByDate[day.dateStr],
+                  }"
+                  @click="handleGanttCellClick(row, day.dateStr)"
+                >
+                  <!-- Blocco se c'è un ordine in questa cella -->
+                  <div
+                    v-if="row.ordersByDate[day.dateStr]"
+                    class="gantt-block"
+                    :class="{
+                      'gantt-block-selected': selectedGanttBlock?.id === row.ordersByDate[day.dateStr].id,
+                    }"
+                    :style="{ background: row.color + 'CC', borderColor: row.color }"
+                    :title="`${row.ordersByDate[day.dateStr].detail}\nOrd. ${row.ordersByDate[day.dateStr].orderNumber}\nClicca per selezionare`"
+                  >
+                    <span
+                      v-if="row.ordersByDate[day.dateStr].totalDays && row.ordersByDate[day.dateStr].totalDays > 1"
+                      class="gantt-block-badge"
+                    >{{ row.ordersByDate[day.dateStr].dayIndex }}/{{ row.ordersByDate[day.dateStr].totalDays }}</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -613,10 +881,11 @@ onUnmounted(() => {
 </template>
 
 <style scoped lang="scss">
-/* ─── Layout ─────────────────────────────────────────────────────── */
+/* ─── Layout full-width ──────────────────────────────────────────── */
 #view-planning {
   padding: 24px;
-  max-width: 1400px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .planning-layout {
@@ -624,6 +893,7 @@ onUnmounted(() => {
   grid-template-columns: 320px 1fr;
   gap: 20px;
   align-items: start;
+  width: 100%;
 }
 
 .planning-left,
@@ -631,6 +901,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  min-width: 0; // previene overflow del flex/grid item
 }
 
 /* ─── Calendario ─────────────────────────────────────────────────── */
@@ -939,14 +1210,426 @@ onUnmounted(() => {
   }
 }
 
-/* ─── Gantt ──────────────────────────────────────────────────────── */
-.gantt-card {
-  padding: 16px;
+/* ─── Blocco durata lavorazione ──────────────────────────────────── */
+.duration-block {
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+
+  .field-label { margin-top: 0; }
 }
 
-.gantt-wrap {
+.duration-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dur-btn {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  background: var(--surface3);
+  border: 1px solid var(--border2);
+  border-radius: var(--r-xs);
+  color: var(--text);
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background .1s;
+  &:hover { background: var(--orange); color: #fff; border-color: var(--orange); }
+}
+
+.dur-input {
+  width: 56px !important;
+  text-align: center;
+  padding: 6px 4px !important;
+  font-size: 18px !important;
+  font-weight: 700;
+  font-family: 'Barlow Condensed', sans-serif;
+}
+
+.dur-label {
+  font-size: 12px;
+  color: var(--muted);
+  flex: 1;
+}
+
+/* Preview date generate */
+.duration-preview {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.duration-preview-title {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--muted);
+}
+
+.duration-preview-dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.duration-preview-chip {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--orange);
+  background: rgba(255, 95, 0, .1);
+  border: 1px solid rgba(255, 95, 0, .25);
+  padding: 2px 8px;
+  border-radius: 20px;
+}
+
+.duration-preview-note {
+  font-size: 11px;
+  color: var(--dim);
+  font-style: italic;
+  line-height: 1.4;
+}
+
+/* Nota modifica singolo giorno */
+.editing-single-day-note {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  padding: 7px 10px;
+  line-height: 1.4;
+}
+
+/* Badge "Giorno X/Y" per ordini multi-giorno */
+.day-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  color: var(--muted);
+  background: var(--surface3);
+  border: 1px solid var(--border2);
+  padding: 1px 6px;
+  border-radius: 20px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+/* Chip stima tempo */
+.time-estimate-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--green);
+  background: rgba(34, 197, 94, .1);
+  padding: 1px 7px;
+  border-radius: 20px;
+}
+
+/* Form inline spostamento data */
+.move-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.move-date-input {
+  flex: 1;
+  min-width: 130px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.btn-move-confirm {
+  padding: 6px 12px;
+  font-size: 12px;
+  background: var(--orange);
+  color: #fff;
+  border: none;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  font-weight: 600;
+  &:hover { background: var(--orange-d); }
+}
+
+.btn-move-cancel {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.icon-btn-active {
+  background: rgba(255, 95, 0, .12) !important;
+  color: var(--orange) !important;
+  border-color: var(--orange) !important;
+}
+
+/* ─── Gantt HTML interattivo ─────────────────────────────────────── */
+
+/* Hint testuale accanto all'etichetta quando un blocco è selezionato */
+.gantt-hint {
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--orange);
+  margin-left: 8px;
+  animation: blink 1.5s ease-in-out infinite;
+}
+
+/* Toolbar spostamento con input date */
+.gantt-move-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--orange);
+  border-radius: var(--r-sm);
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.gantt-move-label {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text);
+  min-width: 160px;
+}
+
+.gantt-move-input {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 5px 8px;
+  font-size: 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: var(--r-xs);
+  color: var(--text);
+  outline: none;
+  &:focus { border-color: var(--orange); }
+}
+
+.gantt-move-confirm {
+  padding: 5px 14px;
+  background: var(--orange);
+  color: #fff;
+  border: none;
+  border-radius: var(--r-xs);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  &:hover { background: var(--orange-d); }
+}
+
+.gantt-move-cancel {
+  padding: 5px 10px;
+  background: var(--surface2);
+  color: var(--muted);
+  border: 1px solid var(--border2);
+  border-radius: var(--r-xs);
+  font-size: 12px;
+  cursor: pointer;
+  &:hover { background: var(--surface3); color: var(--text); }
+}
+
+/* Card Gantt: nessun padding, la griglia arriva ai bordi */
+.gantt-card {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* Wrapper con scroll orizzontale */
+.gantt-grid-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
+  min-width: 0;
+}
+
+/* Riga header con le date */
+.gantt-header-row {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 2;
+}
+
+/* Riga lavorazione */
+.gantt-row {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  &:last-child { border-bottom: none; }
+  &:hover { background: rgba(255,255,255,.015); }
+}
+
+/* Cella etichetta lavorazione (colonna fissa a sinistra) */
+.gantt-label-cell {
+  flex: 0 0 200px;
+  min-width: 200px;
+  padding: 6px 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-right: 1px solid var(--border);
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+
+.gantt-label-header {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--muted);
+  background: var(--surface);
+}
+
+.gantt-row-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.gantt-row-label {
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 165px;
+}
+
+/* Header singolo giorno */
+.gantt-day-header {
+  flex: 0 0 36px;
+  min-width: 36px;
+  text-align: center;
+  padding: 4px 2px;
+  border-right: 1px solid var(--border);
+  cursor: default;
+
+  &:last-child { border-right: none; }
+
+  &.gantt-day-weekend {
+    background: rgba(255,255,255,.025);
+  }
+
+  &.gantt-day-today {
+    background: rgba(255, 95, 0, .12);
+    .gantt-day-num { color: var(--orange); font-weight: 700; }
+  }
+}
+
+.gantt-day-name {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  color: var(--muted);
+  line-height: 1.2;
+}
+
+.gantt-day-num {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.2;
+}
+
+/* Singola cella giornaliera nella riga lavorazione */
+.gantt-cell {
+  flex: 0 0 36px;
+  min-width: 36px;
+  height: 36px;
+  padding: 3px;
+  border-right: 1px solid var(--border);
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  &:last-child { border-right: none; }
+
+  &.gantt-cell-weekend {
+    background: rgba(255,255,255,.025);
+  }
+
+  &.gantt-cell-today {
+    background: rgba(255, 95, 0, .06);
+  }
+
+  &.gantt-cell-droptarget {
+    cursor: crosshair;
+    &:hover {
+      background: rgba(255, 95, 0, .12);
+      &::after {
+        content: '+';
+        position: absolute;
+        color: var(--orange);
+        font-size: 16px;
+        font-weight: 700;
+        line-height: 1;
+      }
+    }
+  }
+}
+
+/* Blocco lavorazione dentro la cella */
+.gantt-block {
   width: 100%;
-  canvas { display: block; }
+  height: 100%;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: filter .12s, transform .1s, box-shadow .12s;
+  position: relative;
+
+  &:hover {
+    filter: brightness(1.2);
+    transform: scale(1.05);
+  }
+
+  &.gantt-block-selected {
+    box-shadow: 0 0 0 2px #fff, 0 0 0 4px var(--orange);
+    transform: scale(1.08);
+    filter: brightness(1.25);
+    z-index: 2;
+  }
+}
+
+/* Badge "X/Y" nei blocchi multi-giorno */
+.gantt-block-badge {
+  font-size: 8px;
+  font-weight: 800;
+  color: rgba(255,255,255,.9);
+  line-height: 1;
+  text-shadow: 0 1px 2px rgba(0,0,0,.5);
+  pointer-events: none;
 }
 </style>

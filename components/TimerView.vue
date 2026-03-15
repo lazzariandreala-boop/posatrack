@@ -287,6 +287,24 @@ const plannedTodayActivities = computed(() =>
     .sort((a, b) => (a.note > b.note ? 1 : -1))
 )
 
+/** Mappa workOrderId → estimatedTime (minuti) per mostrare la stima in "Da fare oggi" */
+const woEstimatedTimeMap = computed(() => {
+  const map = new Map<string, number>()
+  store.getAllWorkOrders().forEach(wo => {
+    if (wo.estimatedTime) map.set(wo.id, wo.estimatedTime)
+  })
+  return map
+})
+
+/** Formatta minuti stimati → "~2h 30m" */
+function fmtEstimated(minutes: number): string {
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  if (h > 0 && m > 0) return `~${h}h ${m}m`
+  if (h > 0) return `~${h}h`
+  return `~${m}m`
+}
+
 /**
  * Avvia un'attività pianificata: acquisce GPS, resetta i timestamp
  * e la imposta come attività corrente senza aprire il modal.
@@ -557,6 +575,9 @@ const gpsText      = computed(() => current.value ? geo.shortFmt(current.value.s
                   <div class="log-meta">
                     {{ ACT[a.type]?.label ?? a.type }}
                     <template v-if="a.orderNumber"> · Ord. <strong>{{ a.orderNumber }}</strong></template>
+                    <template v-if="a.workOrderId && woEstimatedTimeMap.get(a.workOrderId)">
+                      · <span class="planned-time-chip">⏱ {{ fmtEstimated(woEstimatedTimeMap.get(a.workOrderId)!) }}</span>
+                    </template>
                     <template v-if="a.note"> · {{ a.note }}</template>
                   </div>
                   <div class="log-actions">
@@ -1170,5 +1191,14 @@ const gpsText      = computed(() => current.value ? geo.shortFmt(current.value.s
 .planned-dur {
   color: var(--dim);
   font-style: italic;
+}
+
+.planned-time-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--green);
 }
 </style>
