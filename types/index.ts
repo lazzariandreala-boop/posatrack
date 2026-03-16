@@ -155,7 +155,8 @@ export interface ActivityTypeMeta {
 
 /** Voce del catalogo attrezzature (per il modal "Posa") */
 export interface CatalogItem {
-  id:    string  // identificatore interno (non modificare dopo la creazione)
-  label: string  // nome leggibile visualizzato in UI e report
-  code:  string  // codice prodotto aziendale (es. "COD-1001")
+  id:    string     // identificatore interno (non modificare dopo la creazione)
+  label: string     // nome leggibile visualizzato in UI e report
+  code:  string     // codice prodotto aziendale (es. "COD-1001")
+  category?: string // categoria del prodotto
 }

@@ -20,6 +20,7 @@ interface _GlobalComponents {
   AppLightbox: typeof import("../../components/AppLightbox.vue")['default']
   AppSidebar: typeof import("../../components/AppSidebar.vue")['default']
   AppToast: typeof import("../../components/AppToast.vue")['default']
+  CatalogSelect: typeof import("../../components/CatalogSelect.vue")['default']
   DashboardView: typeof import("../../components/DashboardView.vue")['default']
   GistSettingsModal: typeof import("../../components/GistSettingsModal.vue")['default']
   PlanningView: typeof import("../../components/PlanningView.vue")['default']
@@ -54,6 +55,7 @@ interface _GlobalComponents {
   LazyAppLightbox: LazyComponent<typeof import("../../components/AppLightbox.vue")['default']>
   LazyAppSidebar: LazyComponent<typeof import("../../components/AppSidebar.vue")['default']>
   LazyAppToast: LazyComponent<typeof import("../../components/AppToast.vue")['default']>
+  LazyCatalogSelect: LazyComponent<typeof import("../../components/CatalogSelect.vue")['default']>
   LazyDashboardView: LazyComponent<typeof import("../../components/DashboardView.vue")['default']>
   LazyGistSettingsModal: LazyComponent<typeof import("../../components/GistSettingsModal.vue")['default']>
   LazyPlanningView: LazyComponent<typeof import("../../components/PlanningView.vue")['default']>

@@ -129,9 +129,6 @@ const formData     = ref({
 
 const planningTypes = ['posa', 'trasferimento', 'altro'] as const
 
-const catalogOptions = computed(() =>
-  formData.value.type === 'posa' ? CATALOG : []
-)
 
 function openAddForm(): void {
   editingId.value = null
@@ -536,12 +533,11 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
             <label class="field-label">
               {{ formData.type === 'posa' ? 'Attrezzatura *' : 'Descrizione *' }}
             </label>
-            <select v-if="formData.type === 'posa'" v-model="formData.detail" class="field-select">
-              <option value="">— Seleziona attrezzatura —</option>
-              <option v-for="item in CATALOG" :key="item.id" :value="item.label">
-                {{ item.label }} ({{ item.code }})
-              </option>
-            </select>
+            <CatalogSelect
+              v-if="formData.type === 'posa'"
+              v-model="formData.detail"
+              value-field="label"
+            />
             <input
               v-else
               v-model="formData.detail"
@@ -999,7 +995,6 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
     .cal-day-num { color: var(--orange); font-weight: 700; }
   }
 
-  &.cal-has-work { }
 }
 
 .cal-day-num {

@@ -261,24 +261,13 @@ defineExpose({ startActivity, doStop })
           <div v-if="hasOrderError" class="field-error">Il numero ordine è obbligatorio</div>
         </div>
         <div class="form-group">
-          <label for="modal-main-select">Attrezzatura da posare *</label>
-          <select
-            id="modal-main-select"
+          <label>Attrezzatura da posare *</label>
+          <CatalogSelect
             v-model="mainValue"
-            :class="{ 'input-error': hasError }"
             :disabled="!orderNumberValue.trim()"
-            :title="!orderNumberValue.trim() ? 'Inserisci prima il numero ordine' : ''"
-            @change="hasError = false"
-          >
-            <option value="">— Seleziona attrezzatura —</option>
-            <option
-              v-for="item in CATALOG"
-              :key="item.id"
-              :value="item.id"
-            >
-              {{ item.label }} — {{ item.code }}
-            </option>
-          </select>
+            :error="hasError"
+            @update:model-value="hasError = false"
+          />
           <div v-if="!orderNumberValue.trim()" class="field-hint">Inserisci prima il numero ordine per sbloccare la selezione</div>
         </div>
         <div class="form-group">
@@ -399,9 +388,9 @@ defineExpose({ startActivity, doStop })
   border-top: 1px solid var(--border2);
   padding: 0 20px calc(28px + var(--safe-b));
   width: 100%;
-  max-width: 560px;
+  max-width: 900px;
   animation: slideUp .24s cubic-bezier(.22, 1, .36, 1); // animazione in main.scss
-  max-height: 90vh;
+  max-height: 95vh;
   overflow-y: auto;
 }
 

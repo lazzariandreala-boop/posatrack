@@ -20,6 +20,7 @@ export const AppGpsLoader: typeof import("../components/AppGpsLoader.vue")['defa
 export const AppLightbox: typeof import("../components/AppLightbox.vue")['default']
 export const AppSidebar: typeof import("../components/AppSidebar.vue")['default']
 export const AppToast: typeof import("../components/AppToast.vue")['default']
+export const CatalogSelect: typeof import("../components/CatalogSelect.vue")['default']
 export const DashboardView: typeof import("../components/DashboardView.vue")['default']
 export const GistSettingsModal: typeof import("../components/GistSettingsModal.vue")['default']
 export const PlanningView: typeof import("../components/PlanningView.vue")['default']
@@ -54,6 +55,7 @@ export const LazyAppGpsLoader: LazyComponent<typeof import("../components/AppGps
 export const LazyAppLightbox: LazyComponent<typeof import("../components/AppLightbox.vue")['default']>
 export const LazyAppSidebar: LazyComponent<typeof import("../components/AppSidebar.vue")['default']>
 export const LazyAppToast: LazyComponent<typeof import("../components/AppToast.vue")['default']>
+export const LazyCatalogSelect: LazyComponent<typeof import("../components/CatalogSelect.vue")['default']>
 export const LazyDashboardView: LazyComponent<typeof import("../components/DashboardView.vue")['default']>
 export const LazyGistSettingsModal: LazyComponent<typeof import("../components/GistSettingsModal.vue")['default']>
 export const LazyPlanningView: LazyComponent<typeof import("../components/PlanningView.vue")['default']>
