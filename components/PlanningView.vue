@@ -10,7 +10,7 @@
 import { ref, computed } from 'vue'
 import { useStore }    from '~/composables/useStore'
 import { useAppState } from '~/composables/useAppState'
-import { ACT, CATALOG, MONTHS_IT } from '~/constants'
+import { ACT, MONTHS_IT } from '~/constants'
 import type { WorkOrder, ActivityType } from '~/types'
 
 // Giorni della settimana Lun→Dom per intestazioni calendario
@@ -113,7 +113,6 @@ function fmtDate(dateStr: string): string {
 }
 
 // ── Form aggiunta / modifica ──────────────────────────────────────────
-const showForm     = ref(false)
 const editingId    = ref<string | null>(null)
 const formData     = ref({
   orderNumber:       '',
@@ -122,28 +121,24 @@ const formData     = ref({
   note:              '',
   date:              todayStr,
   estimatedDuration: 1,
-  startHour:         '',
-  estimatedTimeH:    0,   // ore stimate per compiere il lavoro
-  estimatedTimeM:    0,   // minuti stimati
+  estimatedTimeH:    0,
+  estimatedTimeM:    0,
 })
 
 const planningTypes = ['posa', 'trasferimento', 'altro'] as const
 
-
-function openAddForm(): void {
+function resetFormData(): void {
   editingId.value = null
   formData.value  = {
     orderNumber:       '',
-    type:              'posa',
+    type:              formData.value.type, // mantieni il tab attivo
     detail:            '',
     note:              '',
     date:              selectedDate.value,
     estimatedDuration: 1,
-    startHour:         '',
     estimatedTimeH:    0,
     estimatedTimeM:    0,
   }
-  showForm.value = true
 }
 
 function openEditForm(wo: WorkOrder): void {
@@ -155,27 +150,23 @@ function openEditForm(wo: WorkOrder): void {
     detail:            wo.detail,
     note:              wo.note,
     date:              wo.date,
-    estimatedDuration: 1, // in modifica si agisce sul singolo giorno
-    startHour:         wo.startHour ?? '',
+    estimatedDuration: 1,
     estimatedTimeH:    Math.floor(et / 60),
     estimatedTimeM:    et % 60,
   }
-  showForm.value = true
 }
 
 function cancelForm(): void {
-  showForm.value = false
-  editingId.value = null
+  resetFormData()
 }
 
 function saveForm(): void {
-  if (!formData.value.orderNumber.trim()) {
-    appState.showToast('Inserire il numero ordine')
-    return
-  }
-  if (!formData.value.detail.trim()) {
-    appState.showToast('Inserire la descrizione del lavoro')
-    return
+  const t = formData.value.type
+  if (t === 'posa') {
+    if (!formData.value.orderNumber.trim()) { appState.showToast('Inserire il numero ordine'); return }
+    if (!formData.value.detail.trim())      { appState.showToast('Selezionare l\'attrezzatura'); return }
+  } else if (t === 'altro') {
+    if (!formData.value.detail.trim())      { appState.showToast('Inserire la descrizione'); return }
   }
 
   const estimatedTime = (formData.value.estimatedTimeH * 60) + formData.value.estimatedTimeM
@@ -187,7 +178,6 @@ function saveForm(): void {
       detail:        formData.value.detail.trim(),
       note:          formData.value.note.trim(),
       date:          formData.value.date,
-      startHour:     formData.value.startHour || undefined,
       estimatedTime: estimatedTime || undefined,
     })
     appState.showToast('Pianificazione aggiornata')
@@ -196,52 +186,47 @@ function saveForm(): void {
     const dur   = Math.max(1, formData.value.estimatedDuration)
 
     if (dur > 1) {
-      // Crea un ordine per ogni giorno lavorativo (Lun–Ven)
       const groupId = `grp_${nowTs}`
       const dates   = getWorkingDays(formData.value.date, dur)
       dates.forEach((date, idx) => {
         store.addWorkOrder({
-          id:            `wo_${nowTs + idx}`,
-          orderNumber:   formData.value.orderNumber.trim(),
-          type:          formData.value.type,
-          detail:        formData.value.detail.trim(),
-          note:          formData.value.note.trim(),
+          id:                `wo_${nowTs + idx}`,
+          orderNumber:       formData.value.orderNumber.trim(),
+          type:              formData.value.type,
+          detail:            formData.value.detail.trim(),
+          note:              formData.value.note.trim(),
           date,
           estimatedDuration: 1,
-          estimatedTime: estimatedTime || undefined,
-          startHour:     formData.value.startHour || undefined,
+          estimatedTime:     estimatedTime || undefined,
           groupId,
-          dayIndex:      idx + 1,
-          totalDays:     dur,
-          createdAt:     nowTs + idx,
+          dayIndex:          idx + 1,
+          totalDays:         dur,
+          createdAt:         nowTs + idx,
         })
       })
       appState.showToast(`Lavorazione pianificata su ${dur} giorni (Lun–Ven)`)
     } else {
       store.addWorkOrder({
-        id:            `wo_${nowTs}`,
-        orderNumber:   formData.value.orderNumber.trim(),
-        type:          formData.value.type,
-        detail:        formData.value.detail.trim(),
-        note:          formData.value.note.trim(),
-        date:          formData.value.date,
+        id:                `wo_${nowTs}`,
+        orderNumber:       formData.value.orderNumber.trim(),
+        type:              formData.value.type,
+        detail:            formData.value.detail.trim(),
+        note:              formData.value.note.trim(),
+        date:              formData.value.date,
         estimatedDuration: 1,
-        estimatedTime: estimatedTime || undefined,
-        startHour:     formData.value.startHour || undefined,
-        createdAt:     nowTs,
+        estimatedTime:     estimatedTime || undefined,
+        createdAt:         nowTs,
       })
       appState.showToast('Lavorazione pianificata')
     }
 
-    // Aggiorna il mese del calendario alla data della prima giornata
     const [y, m] = formData.value.date.split('-').map(Number)
     calYear.value      = y
     calMonth.value     = m - 1
     selectedDate.value = formData.value.date
   }
 
-  showForm.value  = false
-  editingId.value = null
+  resetFormData()
 }
 
 // ── Spostamento ordine ────────────────────────────────────────────────
@@ -437,21 +422,95 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
         <div class="hdr-day">PIANIFICAZIONE</div>
         <div class="page-title">Lavorazioni</div>
       </div>
-      <div style="color: var(--muted); font-size: 13px; text-align: right; line-height: 1.5;">
+      <!-- <div style="color: var(--muted); font-size: 13px; text-align: right; line-height: 1.5;">
         Solo desktop<br>
         <span style="color: var(--dim)">Programma le lavorazioni future</span>
-      </div>
+      </div> -->
     </div>
 
-    <!-- ── Layout principale: colonna sx + colonna dx ───────────────── -->
-    <div class="planning-layout">
+    <!-- ── Gantt a tutta larghezza (SOPRA) ─────────────────────────── -->
+    <div class="planning-gantt">
+      <div class="slabel">
+        GANTT – PROSSIME 3 SETTIMANE
+        <span v-if="selectedGanttBlock" class="gantt-hint">
+          Blocco selezionato: clicca una cella vuota per spostarlo
+        </span>
+      </div>
 
-      <!-- ═══════════════════════════════════════
-           COLONNA SINISTRA: Calendario + Form
-           ═══════════════════════════════════════ -->
-      <div class="planning-left">
+      <div v-if="selectedGanttBlock" class="gantt-move-toolbar">
+        <span class="gantt-move-label">
+          ✂ Sposta <strong>{{ selectedGanttBlock.detail }}</strong>
+          <span v-if="selectedGanttBlock.totalDays && selectedGanttBlock.totalDays > 1">
+            (Giorno {{ selectedGanttBlock.dayIndex }}/{{ selectedGanttBlock.totalDays }})
+          </span>
+        </span>
+        <input v-model="ganttMoveDate" type="date" class="gantt-move-input" />
+        <button class="gantt-move-confirm" @click="confirmGanttMove">Sposta</button>
+        <button class="gantt-move-cancel" @click="clearGanttBlock">✕</button>
+      </div>
 
-        <!-- Calendario mensile ──────────────────────────────────────── -->
+      <div class="card gantt-card">
+        <div v-if="!ganttWindowOrders.length" class="empty" style="padding: 40px 0">
+          <svg viewBox="0 0 24 24">
+            <line x1="18" y1="20" x2="18" y2="10"/>
+            <line x1="12" y1="20" x2="12" y2="4"/>
+            <line x1="6"  y1="20" x2="6"  y2="14"/>
+          </svg>
+          <h3>Nessuna lavorazione pianificata</h3>
+          <p>Le lavorazioni nelle prossime 3 settimane appariranno qui</p>
+        </div>
+        <div v-else class="gantt-grid-wrap">
+          <div class="gantt-header-row">
+            <div class="gantt-label-cell gantt-label-header">Lavorazione</div>
+            <div
+              v-for="day in ganttDays"
+              :key="day.dateStr"
+              class="gantt-day-header"
+              :class="{ 'gantt-day-today': day.isToday, 'gantt-day-weekend': day.isWeekend }"
+            >
+              <div class="gantt-day-name">{{ day.name }}</div>
+              <div class="gantt-day-num">{{ day.num }}</div>
+            </div>
+          </div>
+          <div v-for="row in ganttRows" :key="row.key" class="gantt-row">
+            <div class="gantt-label-cell" :title="row.label">
+              <div class="gantt-row-dot" :style="{ background: row.color }" />
+              <span class="gantt-row-label">{{ row.label }}</span>
+            </div>
+            <div
+              v-for="day in ganttDays"
+              :key="day.dateStr"
+              class="gantt-cell"
+              :class="{
+                'gantt-cell-today':      day.isToday,
+                'gantt-cell-weekend':    day.isWeekend,
+                'gantt-cell-droptarget': selectedGanttBlock && !row.ordersByDate[day.dateStr],
+              }"
+              @click="handleGanttCellClick(row, day.dateStr)"
+            >
+              <div
+                v-if="row.ordersByDate[day.dateStr]"
+                class="gantt-block"
+                :class="{ 'gantt-block-selected': selectedGanttBlock?.id === row.ordersByDate[day.dateStr].id }"
+                :style="{ background: row.color + 'CC', borderColor: row.color }"
+                :title="`${row.ordersByDate[day.dateStr].detail}\nOrd. ${row.ordersByDate[day.dateStr].orderNumber}\nClicca per selezionare`"
+              >
+                <span v-if="(row?.ordersByDate?.[day?.dateStr]?.totalDays ?? 0) > 1" class="gantt-block-badge">
+                  {{ row.ordersByDate[day.dateStr].dayIndex }}/{{ row.ordersByDate[day.dateStr].totalDays }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div><!-- /planning-gantt -->
+
+    <!-- ── Layout 3 colonne ──────────────────────────────────────────── -->
+    <div class="planning-top">
+
+      <!-- SINISTRA: Calendario ──────────────────────────────────────── -->
+      <div class="planning-col">
+        <div class="slabel" style="margin-bottom: 13px">CALENDARIO LAVORAZIONI</div>
         <div class="card calendar-card">
           <div class="calendar-header">
             <button class="cal-nav-btn" @click="prevMonth">
@@ -462,15 +521,9 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
               <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
             </button>
           </div>
-
-          <!-- Intestazioni giorni (Lun → Dom) -->
           <div class="cal-grid cal-weekdays">
-            <div v-for="d in WEEK_HEADERS" :key="d" class="cal-wday">
-              {{ d }}
-            </div>
+            <div v-for="d in WEEK_HEADERS" :key="d" class="cal-wday">{{ d }}</div>
           </div>
-
-          <!-- Celle giorni -->
           <div class="cal-grid cal-days">
             <div
               v-for="(cell, idx) in calDays"
@@ -487,391 +540,200 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
               <template v-if="cell">
                 <span class="cal-day-num">{{ cell.day }}</span>
                 <div v-if="cell.orders > 0" class="cal-dots">
-                  <span
-                    v-for="n in Math.min(cell.orders, 3)"
-                    :key="n"
-                    class="cal-dot"
-                  />
+                  <span v-for="n in Math.min(cell.orders, 3)" :key="n" class="cal-dot" />
                 </div>
               </template>
             </div>
           </div>
-        </div><!-- /calendar-card -->
+        </div>
+      </div>
 
-        <!-- Form aggiunta / modifica ────────────────────────────────── -->
-        <div class="card form-card">
-          <div class="form-card-header">
-            <div class="slabel" style="margin-bottom:0">
-              {{ editingId ? 'MODIFICA LAVORAZIONE' : 'NUOVA LAVORAZIONE' }}
-            </div>
-            <button v-if="!showForm" class="btn btn-add" @click="openAddForm">
-              <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-              Aggiungi
-            </button>
-          </div>
+      <!-- CENTRO: Lavorazioni del giorno ───────────────────────────── -->
+      <div class="planning-col">
+        <div class="slabel">
+          LAVORAZIONI DEL {{ fmtDate(selectedDate).toUpperCase() }}
+          <span v-if="selectedDate === todayStr" class="today-badge">OGGI</span>
+        </div>
+        <div class="card">
+          <div class="card-body">
 
-          <div v-if="showForm" class="plan-form">
-
-            <!-- Numero ordine -->
-            <label class="field-label">Numero ordine *</label>
-            <input
-              v-model="formData.orderNumber"
-              class="field-input"
-              type="text"
-              placeholder="es. ORD-2025-001"
-            />
-
-            <!-- Tipo -->
-            <label class="field-label">Tipo attività *</label>
-            <select v-model="formData.type" class="field-select">
-              <option v-for="t in planningTypes" :key="t" :value="t">
-                {{ ACT[t]?.emoji }} {{ ACT[t]?.label }}
-              </option>
-            </select>
-
-            <!-- Dettaglio / Attrezzatura -->
-            <label class="field-label">
-              {{ formData.type === 'posa' ? 'Attrezzatura *' : 'Descrizione *' }}
-            </label>
-            <CatalogSelect
-              v-if="formData.type === 'posa'"
-              v-model="formData.detail"
-              value-field="label"
-            />
-            <input
-              v-else
-              v-model="formData.detail"
-              class="field-input"
-              type="text"
-              placeholder="Descrizione del lavoro..."
-            />
-
-            <!-- Data + Ora inizio -->
-            <div class="field-row">
-              <div style="flex:1">
-                <label class="field-label">Data inizio *</label>
-                <input v-model="formData.date" class="field-input" type="date" />
-              </div>
-              <div style="flex:1">
-                <label class="field-label">Ora inizio (opz.)</label>
-                <input v-model="formData.startHour" class="field-input" type="time" />
-              </div>
+            <div v-if="!selectedOrders.length" class="empty">
+              <svg viewBox="0 0 24 24">
+                <rect x="3" y="4" width="18" height="18" rx="2"/>
+                <path d="M16 2v4M8 2v4M3 10h18"/>
+              </svg>
+              <h3>Nessuna lavorazione</h3>
+              <p>Aggiungi una lavorazione per questo giorno</p>
             </div>
 
-            <!-- Durata in giorni lavorativi (solo in aggiunta) -->
-            <div v-if="!editingId" class="duration-block">
-              <label class="field-label">Durata lavorazione</label>
-              <div class="duration-row">
-                <button
-                  type="button"
-                  class="dur-btn"
-                  @click="formData.estimatedDuration = Math.max(1, formData.estimatedDuration - 1)"
-                >−</button>
-                <input
-                  v-model.number="formData.estimatedDuration"
-                  class="field-input dur-input"
-                  type="number"
-                  min="1"
-                  max="30"
-                />
-                <button
-                  type="button"
-                  class="dur-btn"
-                  @click="formData.estimatedDuration = Math.min(30, formData.estimatedDuration + 1)"
-                >+</button>
-                <span class="dur-label">
-                  {{ formData.estimatedDuration === 1 ? 'giorno lavorativo' : 'giorni lavorativi (Lun–Ven)' }}
-                </span>
-              </div>
-
-              <!-- Preview date generate -->
-              <div v-if="formData.estimatedDuration > 1 && durationPreviewDates.length" class="duration-preview">
-                <div class="duration-preview-title">Giornate che verranno create:</div>
-                <div class="duration-preview-dates">
+            <div v-for="wo in selectedOrders" :key="wo.id" class="order-item">
+              <div class="order-bar" :style="{ background: ACT[wo.type]?.color ?? '#888' }" />
+              <div class="order-body">
+                <div class="order-title">
+                  {{ wo.detail }}
                   <span
-                    v-for="(d, i) in durationPreviewDates"
-                    :key="d"
-                    class="duration-preview-chip"
-                  >{{ i + 1 }}. {{ fmtShortDate(d) }}</span>
+                    v-if="wo.groupId && wo.totalDays && wo.totalDays > 1"
+                    class="day-badge"
+                  >Giorno {{ wo.dayIndex }}/{{ wo.totalDays }}</span>
                 </div>
-                <div class="duration-preview-note">
-                  Ogni giornata apparirà nel Gantt come blocco separato spostabile indipendentemente.
+                <div class="order-meta">
+                  <span class="order-type-badge" :style="{ background: (ACT[wo.type]?.color ?? '#888') + '33', color: ACT[wo.type]?.color ?? '#888' }">
+                    {{ ACT[wo.type]?.emoji }} {{ ACT[wo.type]?.label }}
+                  </span>
+                  <span>Ord. <strong>{{ wo.orderNumber }}</strong></span>
+                  <span v-if="wo.startHour">🕐 {{ wo.startHour }}</span>
+                  <span v-if="wo.estimatedTime" class="time-estimate-chip">
+                    ⏱ {{ fmtEstimatedTime(wo.estimatedTime) }}
+                  </span>
                 </div>
+                <div v-if="wo.note" class="order-note">{{ wo.note }}</div>
+                <div v-if="movingOrderId === wo.id" class="move-form">
+                  <input v-model="moveTargetDate" class="field-input move-date-input" type="date" />
+                  <button class="btn btn-move-confirm" @click="confirmMove">Conferma</button>
+                  <button class="btn btn-ghost btn-move-cancel" @click="cancelMove">✕</button>
+                </div>
+              </div>
+              <div class="order-actions">
+                <button
+                  class="icon-btn"
+                  title="Sposta ad altro giorno"
+                  :class="{ 'icon-btn-active': movingOrderId === wo.id }"
+                  @click="movingOrderId === wo.id ? cancelMove() : startMove(wo)"
+                >
+                  <svg viewBox="0 0 24 24">
+                    <rect x="3" y="4" width="18" height="18" rx="2"/>
+                    <path d="M16 2v4M8 2v4M3 10h18"/>
+                    <path d="M8 14h4m0 0l-2-2m2 2l-2 2"/>
+                  </svg>
+                </button>
+                <button class="icon-btn" title="Modifica" @click="openEditForm(wo)">
+                  <svg viewBox="0 0 24 24">
+                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                  </svg>
+                </button>
+                <button class="icon-btn icon-btn-danger" title="Elimina" @click="deleteOrder(wo)">
+                  <svg viewBox="0 0 24 24">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6"/>
+                  </svg>
+                </button>
               </div>
             </div>
 
-            <!-- Badge info quando si sta modificando un ordine di un gruppo -->
-            <div v-if="editingId" class="editing-single-day-note">
-              ℹ Stai modificando questa singola giornata. Per cambiare la data usa il pulsante Sposta nel Gantt.
+          </div>
+        </div>
+      </div>
+
+      <!-- DESTRA: Form nuova / modifica lavorazione ────────────────── -->
+      <div class="planning-col">
+        <div class="slabel" style="margin-bottom: 12px">
+          {{ editingId ? 'MODIFICA LAVORAZIONE' : 'NUOVA LAVORAZIONE' }}
+        </div>
+        <div class="card form-card">
+          <div class="plan-form">
+
+            <!-- Tab tipo -->
+            <div class="type-tabs">
+              <button
+                v-for="t in planningTypes"
+                :key="t"
+                type="button"
+                class="type-tab"
+                :class="{ active: formData.type === t }"
+                :style="formData.type === t ? { borderColor: ACT[t]?.color, color: ACT[t]?.color } : {}"
+                @click="formData.type = t"
+              >
+                {{ ACT[t]?.emoji }} {{ ACT[t]?.label }}
+              </button>
             </div>
 
-            <!-- Stima tempistiche -->
-            <label class="field-label">Stima tempo di esecuzione</label>
-            <div class="field-row">
-              <div style="flex:1">
-                <input
-                  v-model.number="formData.estimatedTimeH"
-                  class="field-input"
-                  type="number"
-                  min="0"
-                  max="23"
-                  placeholder="Ore"
-                />
+            <!-- Campi POSA -->
+            <template v-if="formData.type === 'posa'">
+              <label class="field-label">N° ordine *</label>
+              <input v-model="formData.orderNumber" class="field-input" type="text" placeholder="es. ORD-2025-001" />
+              <label class="field-label">Attrezzatura *</label>
+              <CatalogSelect v-model="formData.detail" value-field="label" />
+            </template>
+
+            <!-- Campi TRASFERIMENTO: nessun campo specifico obbligatorio -->
+
+            <!-- Campi ALTRO -->
+            <template v-if="formData.type === 'altro'">
+              <label class="field-label">Descrizione *</label>
+              <input v-model="formData.detail" class="field-input" type="text" placeholder="Descrizione del lavoro..." />
+            </template>
+
+            <!-- Data -->
+            <label class="field-label">Data *</label>
+            <input v-model="formData.date" class="field-input" type="date" />
+
+            <!-- Durata + Stima tempo affiancate -->
+            <div v-if="!editingId" class="dur-stima-row">
+              <div class="dur-stima-col">
+                <label class="field-label">Durata</label>
+                <div class="duration-row">
+                  <button type="button" class="dur-btn" @click="formData.estimatedDuration = Math.max(1, formData.estimatedDuration - 1)">−</button>
+                  <input v-model.number="formData.estimatedDuration" class="field-input dur-input" type="number" min="1" max="30" />
+                  <button type="button" class="dur-btn" @click="formData.estimatedDuration = Math.min(30, formData.estimatedDuration + 1)">+</button>
+                </div>
+                <span class="dur-label">{{ formData.estimatedDuration === 1 ? 'giorno lav.' : 'giorni (Lun–Ven)' }}</span>
               </div>
-              <div style="flex:1">
-                <input
-                  v-model.number="formData.estimatedTimeM"
-                  class="field-input"
-                  type="number"
-                  min="0"
-                  max="59"
-                  step="15"
-                  placeholder="Minuti"
-                />
-              </div>
-              <div style="flex:1; display:flex; align-items:center; font-size:12px; color:var(--muted); padding-top:2px;">
-                <span v-if="formData.estimatedTimeH || formData.estimatedTimeM">
-                  {{ fmtEstimatedTime(formData.estimatedTimeH * 60 + formData.estimatedTimeM) }}
+              <div class="dur-stima-col">
+                <label class="field-label">Stima tempo</label>
+                <div class="duration-row">
+                  <input v-model.number="formData.estimatedTimeH" class="field-input dur-input" type="number" min="0" max="23" placeholder="0" />
+                  <span class="dur-sep">h</span>
+                  <input v-model.number="formData.estimatedTimeM" class="field-input dur-input" type="number" min="0" max="59" step="15" placeholder="0" />
+                  <span class="dur-sep">m</span>
+                </div>
+                <span class="dur-label">
+                  <template v-if="formData.estimatedTimeH || formData.estimatedTimeM">{{ fmtEstimatedTime(formData.estimatedTimeH * 60 + formData.estimatedTimeM) }}</template>
+                  <template v-else>ore · minuti</template>
                 </span>
-                <span v-else style="color:var(--dim)">Ore · Minuti</span>
+              </div>
+            </div>
+
+            <!-- Solo stima quando si modifica -->
+            <template v-if="editingId">
+              <div class="editing-single-day-note">ℹ Stai modificando questa singola giornata.</div>
+              <label class="field-label">Stima tempo</label>
+              <div class="duration-row">
+                <input v-model.number="formData.estimatedTimeH" class="field-input dur-input" type="number" min="0" max="23" placeholder="0" />
+                <span class="dur-sep">h</span>
+                <input v-model.number="formData.estimatedTimeM" class="field-input dur-input" type="number" min="0" max="59" step="15" placeholder="0" />
+                <span class="dur-sep">m</span>
+                <span class="dur-label">
+                  <template v-if="formData.estimatedTimeH || formData.estimatedTimeM">{{ fmtEstimatedTime(formData.estimatedTimeH * 60 + formData.estimatedTimeM) }}</template>
+                </span>
+              </div>
+            </template>
+
+            <!-- Preview date multi-giorno -->
+            <div v-if="!editingId && formData.estimatedDuration > 1 && durationPreviewDates.length" class="duration-preview">
+              <div class="duration-preview-title">Giornate che verranno create:</div>
+              <div class="duration-preview-dates">
+                <span v-for="(d, i) in durationPreviewDates" :key="d" class="duration-preview-chip">{{ i + 1 }}. {{ fmtShortDate(d) }}</span>
               </div>
             </div>
 
             <!-- Note -->
             <label class="field-label">Note</label>
-            <textarea
-              v-model="formData.note"
-              class="field-textarea"
-              rows="2"
-              placeholder="Note aggiuntive..."
-            />
+            <textarea v-model="formData.note" class="field-textarea" rows="2" placeholder="Note aggiuntive..." />
 
-            <!-- Bottoni -->
             <div class="form-actions">
-              <button class="btn" @click="saveForm">
+              <button class="btn btn-full" @click="saveForm">
                 <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
                 {{ editingId ? 'Salva modifiche' : 'Pianifica' }}
               </button>
-              <button class="btn btn-ghost" @click="cancelForm">Annulla</button>
+              <button v-if="editingId" class="btn btn-ghost btn-full" @click="cancelForm">Annulla</button>
             </div>
 
-          </div><!-- /plan-form -->
-        </div><!-- /form-card -->
-
-      </div><!-- /planning-left -->
-
-
-      <!-- ═══════════════════════════════════════
-           COLONNA DESTRA: Lista ordini + Gantt
-           ═══════════════════════════════════════ -->
-      <div class="planning-right">
-
-        <!-- Lista ordini del giorno selezionato ─────────────────────── -->
-        <div>
-          <div class="slabel">
-            LAVORAZIONI DEL {{ fmtDate(selectedDate).toUpperCase() }}
-            <span v-if="selectedDate === todayStr" class="today-badge">OGGI</span>
-          </div>
-          <div class="card">
-            <div class="card-body">
-
-              <div v-if="!selectedOrders.length" class="empty">
-                <svg viewBox="0 0 24 24">
-                  <rect x="3" y="4" width="18" height="18" rx="2"/>
-                  <path d="M16 2v4M8 2v4M3 10h18"/>
-                </svg>
-                <h3>Nessuna lavorazione</h3>
-                <p>Aggiungi una lavorazione per questo giorno</p>
-              </div>
-
-              <div
-                v-for="wo in selectedOrders"
-                :key="wo.id"
-                class="order-item"
-              >
-                <!-- Barra colorata tipo -->
-                <div class="order-bar" :style="{ background: ACT[wo.type]?.color ?? '#888' }" />
-
-                <div class="order-body">
-                  <div class="order-title">
-                    {{ wo.detail }}
-                    <!-- Badge giorno X/Y per lavorazioni multi-giorno -->
-                    <span
-                      v-if="wo.groupId && wo.totalDays && wo.totalDays > 1"
-                      class="day-badge"
-                    >Giorno {{ wo.dayIndex }}/{{ wo.totalDays }}</span>
-                  </div>
-                  <div class="order-meta">
-                    <span class="order-type-badge" :style="{ background: (ACT[wo.type]?.color ?? '#888') + '33', color: ACT[wo.type]?.color ?? '#888' }">
-                      {{ ACT[wo.type]?.emoji }} {{ ACT[wo.type]?.label }}
-                    </span>
-                    <span>Ord. <strong>{{ wo.orderNumber }}</strong></span>
-                    <span v-if="wo.startHour">🕐 {{ wo.startHour }}</span>
-                    <span v-if="wo.estimatedTime" class="time-estimate-chip">
-                      ⏱ {{ fmtEstimatedTime(wo.estimatedTime) }}
-                    </span>
-                  </div>
-                  <div v-if="wo.note" class="order-note">{{ wo.note }}</div>
-
-                  <!-- Form inline Sposta -->
-                  <div v-if="movingOrderId === wo.id" class="move-form">
-                    <input
-                      v-model="moveTargetDate"
-                      class="field-input move-date-input"
-                      type="date"
-                    />
-                    <button class="btn btn-move-confirm" @click="confirmMove">Conferma</button>
-                    <button class="btn btn-ghost btn-move-cancel" @click="cancelMove">✕</button>
-                  </div>
-                </div>
-
-                <div class="order-actions">
-                  <!-- Sposta -->
-                  <button
-                    class="icon-btn"
-                    title="Sposta ad altro giorno"
-                    :class="{ 'icon-btn-active': movingOrderId === wo.id }"
-                    @click="movingOrderId === wo.id ? cancelMove() : startMove(wo)"
-                  >
-                    <svg viewBox="0 0 24 24">
-                      <rect x="3" y="4" width="18" height="18" rx="2"/>
-                      <path d="M16 2v4M8 2v4M3 10h18"/>
-                      <path d="M8 14h4m0 0l-2-2m2 2l-2 2"/>
-                    </svg>
-                  </button>
-                  <!-- Modifica -->
-                  <button class="icon-btn" title="Modifica" @click="openEditForm(wo)">
-                    <svg viewBox="0 0 24 24">
-                      <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
-                      <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                    </svg>
-                  </button>
-                  <!-- Elimina -->
-                  <button class="icon-btn icon-btn-danger" title="Elimina" @click="deleteOrder(wo)">
-                    <svg viewBox="0 0 24 24">
-                      <polyline points="3 6 5 6 21 6"/>
-                      <path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6"/>
-                    </svg>
-                  </button>
-                </div>
-              </div>
-
-            </div><!-- /card-body -->
           </div>
         </div>
+      </div>
 
-        <!-- Gantt HTML interattivo ─────────────────────────────────── -->
-        <div>
-          <div class="slabel">
-            GANTT – PROSSIME 3 SETTIMANE
-            <span v-if="selectedGanttBlock" class="gantt-hint">
-              Blocco selezionato: clicca una cella vuota per spostarlo
-            </span>
-          </div>
-
-          <!-- Toolbar spostamento da input date -->
-          <div v-if="selectedGanttBlock" class="gantt-move-toolbar">
-            <span class="gantt-move-label">
-              ✂ Sposta
-              <strong>{{ selectedGanttBlock.detail }}</strong>
-              <span v-if="selectedGanttBlock.totalDays && selectedGanttBlock.totalDays > 1">
-                (Giorno {{ selectedGanttBlock.dayIndex }}/{{ selectedGanttBlock.totalDays }})
-              </span>
-            </span>
-            <input
-              v-model="ganttMoveDate"
-              type="date"
-              class="gantt-move-input"
-            />
-            <button class="gantt-move-confirm" @click="confirmGanttMove">Sposta</button>
-            <button class="gantt-move-cancel" @click="clearGanttBlock">✕</button>
-          </div>
-
-          <div class="card gantt-card">
-            <div
-              v-if="!ganttWindowOrders.length"
-              class="empty"
-              style="padding: 40px 0"
-            >
-              <svg viewBox="0 0 24 24">
-                <line x1="18" y1="20" x2="18" y2="10"/>
-                <line x1="12" y1="20" x2="12" y2="4"/>
-                <line x1="6"  y1="20" x2="6"  y2="14"/>
-              </svg>
-              <h3>Nessuna lavorazione pianificata</h3>
-              <p>Le lavorazioni nelle prossime 3 settimane appariranno qui</p>
-            </div>
-
-            <!-- Griglia Gantt -->
-            <div v-else class="gantt-grid-wrap">
-              <!-- Header giorni -->
-              <div class="gantt-header-row">
-                <div class="gantt-label-cell gantt-label-header">Lavorazione</div>
-                <div
-                  v-for="day in ganttDays"
-                  :key="day.dateStr"
-                  class="gantt-day-header"
-                  :class="{
-                    'gantt-day-today':   day.isToday,
-                    'gantt-day-weekend': day.isWeekend,
-                  }"
-                >
-                  <div class="gantt-day-name">{{ day.name }}</div>
-                  <div class="gantt-day-num">{{ day.num }}</div>
-                </div>
-              </div>
-
-              <!-- Righe lavorazioni -->
-              <div
-                v-for="row in ganttRows"
-                :key="row.key"
-                class="gantt-row"
-              >
-                <!-- Label -->
-                <div class="gantt-label-cell" :title="row.label">
-                  <div
-                    class="gantt-row-dot"
-                    :style="{ background: row.color }"
-                  />
-                  <span class="gantt-row-label">{{ row.label }}</span>
-                </div>
-
-                <!-- Celle giornaliere -->
-                <div
-                  v-for="day in ganttDays"
-                  :key="day.dateStr"
-                  class="gantt-cell"
-                  :class="{
-                    'gantt-cell-today':   day.isToday,
-                    'gantt-cell-weekend': day.isWeekend,
-                    'gantt-cell-droptarget': selectedGanttBlock && !row.ordersByDate[day.dateStr],
-                  }"
-                  @click="handleGanttCellClick(row, day.dateStr)"
-                >
-                  <!-- Blocco se c'è un ordine in questa cella -->
-                  <div
-                    v-if="row.ordersByDate[day.dateStr]"
-                    class="gantt-block"
-                    :class="{
-                      'gantt-block-selected': selectedGanttBlock?.id === row.ordersByDate[day.dateStr].id,
-                    }"
-                    :style="{ background: row.color + 'CC', borderColor: row.color }"
-                    :title="`${row.ordersByDate[day.dateStr].detail}\nOrd. ${row.ordersByDate[day.dateStr].orderNumber}\nClicca per selezionare`"
-                  >
-                    <span
-                      v-if="(row?.ordersByDate?.[day?.dateStr]?.totalDays ?? 0) > 1"
-                      class="gantt-block-badge"
-                    >{{ row.ordersByDate[day.dateStr].dayIndex }}/{{ row.ordersByDate[day.dateStr].totalDays }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-      </div><!-- /planning-right -->
-
-    </div><!-- /planning-layout -->
+    </div><!-- /planning-top -->
 
   </div>
 </template>
@@ -884,20 +746,24 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
   box-sizing: border-box;
 }
 
-.planning-layout {
+.planning-gantt {
+  margin-bottom: 20px;
+  width: 100%;
+}
+
+.planning-top {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 280px 1fr 300px;
   gap: 20px;
   align-items: start;
   width: 100%;
 }
 
-.planning-left,
-.planning-right {
+.planning-col {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  min-width: 0; // previene overflow del flex/grid item
+  gap: 0;
+  min-width: 0;
 }
 
 /* ─── Calendario ─────────────────────────────────────────────────── */
@@ -1020,11 +886,34 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
   padding: 16px;
 }
 
-.form-card-header {
+.type-tabs {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 12px;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.type-tab {
+  flex: 1;
+  padding: 6px 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: var(--r-xs);
+  color: var(--muted);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color .15s, color .15s, background .15s;
+
+  &.active {
+    background: var(--surface3);
+  }
+
+  &:hover:not(.active) {
+    background: var(--surface3);
+    color: var(--text);
+  }
 }
 
 .plan-form {
@@ -1069,8 +958,14 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
 
 .form-actions {
   display: flex;
-  gap: 8px;
+  flex-direction: column;
+  gap: 6px;
   margin-top: 4px;
+}
+
+.btn-full {
+  width: 100%;
+  justify-content: center;
 }
 
 .btn-add {
@@ -1218,15 +1113,49 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
   .field-label { margin-top: 0; }
 }
 
+// Dimensioni condivise fra input numerici e bottoni +/-
+$dur-size: 36px;
+
+.dur-stima-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  border: 1px solid var(--border2);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.dur-stima-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 10px 8px;
+  background: var(--surface2);
+
+  &:first-child {
+    border-right: 1px solid var(--border2);
+  }
+
+  .field-label { margin-top: 0; }
+}
+
+.dur-sep {
+  font-size: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+  width: 10px;
+  text-align: center;
+}
+
 .duration-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .dur-btn {
-  width: 30px;
-  height: 30px;
+  width: $dur-size;
+  height: $dur-size;
   flex-shrink: 0;
   background: var(--surface3);
   border: 1px solid var(--border2);
@@ -1244,12 +1173,15 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
 }
 
 .dur-input {
-  width: 56px !important;
+  width: $dur-size !important;
+  height: $dur-size;
+  flex-shrink: 0;
   text-align: center;
-  padding: 6px 4px !important;
-  font-size: 18px !important;
-  font-weight: 700;
-  font-family: 'Barlow Condensed', sans-serif;
+  padding: 0 2px !important;
+  font-size: 13px !important;
+  font-weight: 400;
+  font-family: 'DM Sans', sans-serif;
+  box-sizing: border-box;
 }
 
 .dur-label {
