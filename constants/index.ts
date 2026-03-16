@@ -729,7 +729,8 @@ export const CATALOG: CatalogItem[] = [
   { id: 'E698', code: '+POSKK030', label: 'Posa in opera di TELEFERICA', category: 'TELEFERICHE' }, 
   { id: 'E699', code: '+POSKK030.1', label: 'Posa in opera di DONDOLO VOLANTE', category: 'TELEFERICHE' }, 
   { id: 'E700', code: '+POSKK030_L', label: 'Posa in opera di TELEFERICA LEAVES', category: 'TELEFERICHE' }, 
-  { id: 'E701', code: '+POSKK030_P', label: 'Posa in opera di TELEFERICA PRIMITIV', category: 'TELEFERICHE' }
+  { id: 'E701', code: '+POSKK030_P', label: 'Posa in opera di TELEFERICA PRIMITIV', category: 'TELEFERICHE' },
+  { id: 'E702', code: 'COD-0000', label: 'Manutenzioni', category: 'MANUTENZIONI' }
 ]
 
 // ──────────────────────────────────────────────────────────────────────────────
