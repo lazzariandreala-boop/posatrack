@@ -863,7 +863,7 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
                     :title="`${row.ordersByDate[day.dateStr].detail}\nOrd. ${row.ordersByDate[day.dateStr].orderNumber}\nClicca per selezionare`"
                   >
                     <span
-                      v-if="row.ordersByDate[day.dateStr].totalDays && row.ordersByDate[day.dateStr].totalDays > 1"
+                      v-if="(row?.ordersByDate?.[day?.dateStr]?.totalDays ?? 0) > 1"
                       class="gantt-block-badge"
                     >{{ row.ordersByDate[day.dateStr].dayIndex }}/{{ row.ordersByDate[day.dateStr].totalDays }}</span>
                   </div>
