@@ -16,6 +16,45 @@ import { ref } from 'vue'
 import type { Activity, WorkOrder, StoreData } from '~/types'
 import { useGistSync } from '~/composables/useGistSync'
 
+/**
+ * Re-inietta le foto locali nel dataset remoto.
+ * Le foto non vengono mai sincronizzate su Gist (per tenerlo sotto 1 MB),
+ * quindi quando il remoto sovrascrive il locale è necessario preservarle.
+ */
+function mergeLocalPhotos(remote: StoreData, local: StoreData): StoreData {
+  const localById = new Map(
+    local.activities.map(a => [a.id, { photos: a.photos, receiptPhotos: a.receiptPhotos }])
+  )
+
+  const mergedActivities = remote.activities.map(a => {
+    const localPhotos = localById.get(a.id)
+    if (!localPhotos) return a
+    return {
+      ...a,
+      // Usa le foto locali se il remoto le ha strippate (data === '')
+      photos:        a.photos?.some(p => p.data)        ? a.photos        : (localPhotos.photos        ?? []),
+      receiptPhotos: a.receiptPhotos?.some(p => p.data) ? a.receiptPhotos : (localPhotos.receiptPhotos ?? []),
+    }
+  })
+
+  // Merge sitePhotos: usa le locali per ogni data dove il remoto ha foto strippate
+  const remoteSite = remote.sitePhotos ?? {}
+  const localSite  = local.sitePhotos  ?? {}
+  const allDates   = new Set([...Object.keys(remoteSite), ...Object.keys(localSite)])
+  const mergedSite: Record<string, import('~/types').Photo[]> = {}
+  for (const date of allDates) {
+    const rp = remoteSite[date] ?? []
+    const lp = localSite[date]  ?? []
+    mergedSite[date] = rp.some(p => p.data) ? rp : lp
+  }
+
+  return {
+    ...remote,
+    activities: mergedActivities,
+    sitePhotos: Object.keys(mergedSite).length ? mergedSite : undefined,
+  }
+}
+
 /** Chiave localStorage */
 const STORE_KEY = 'pt_v3'
 
@@ -104,8 +143,11 @@ export function useStore() {
       const localTs  = local.lastModified  ?? 0
 
       if (remoteTs > localTs) {
-        // Il remoto è più aggiornato: aggiorna localStorage senza schedulare un push
-        localStorage.setItem(STORE_KEY, JSON.stringify(remote))
+        // Il remoto è più aggiornato: aggiorna localStorage senza schedulare un push.
+        // Le foto non sono mai presenti nel Gist (vengono strippate prima del push),
+        // quindi le ri-inietta dal locale per non perderle.
+        const merged = mergeLocalPhotos(remote, local)
+        localStorage.setItem(STORE_KEY, JSON.stringify(merged))
         _version.value++
       } else if (localTs > remoteTs) {
         // Il locale è più aggiornato: carica subito sul Gist

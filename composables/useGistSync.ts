@@ -25,6 +25,38 @@ const GIST_CONFIG_KEY = 'pt_gist_config'
 const GIST_FILE_NAME  = 'posatrack-data.json'
 const GITHUB_API      = 'https://api.github.com'
 
+/**
+ * Dimensione massima del payload Gist in byte.
+ * GitHub restituisce il contenuto inline nell'API response solo se < 1MB.
+ * Sopra quella soglia il file viene servito da gist.githubusercontent.com
+ * che non ha CORS headers → inaccessibile da qualsiasi web app.
+ */
+const MAX_GIST_BYTES = 900_000 // 900 KB, margine di sicurezza sotto il limite di 1 MB
+
+/**
+ * Crea una copia di StoreData senza i dati base64 delle foto.
+ * Le foto restano solo in localStorage e non vengono mai sincronizzate su Gist,
+ * garantendo che il file rimanga sempre sotto il limite di 1 MB.
+ */
+function stripPhotos(data: StoreData): StoreData {
+  return {
+    ...data,
+    activities: data.activities.map(a => ({
+      ...a,
+      photos:        a.photos?.map(p => ({ ...p, data: '' })),
+      receiptPhotos: a.receiptPhotos?.map(p => ({ ...p, data: '' })),
+    })),
+    sitePhotos: data.sitePhotos
+      ? Object.fromEntries(
+          Object.entries(data.sitePhotos).map(([date, photos]) => [
+            date,
+            photos.map(p => ({ ...p, data: '' })),
+          ])
+        )
+      : undefined,
+  }
+}
+
 // ─── Stato reattivo singleton ─────────────────────────────────────────────────
 const syncStatus = ref<'idle' | 'syncing' | 'ok' | 'error'>('idle')
 const lastSync   = ref<number | null>(null)
@@ -134,6 +166,16 @@ export function useGistSync() {
 
     syncStatus.value = 'syncing'
     try {
+      // Rimuove le attività più vecchie finché il payload rientra nel limite.
+      // Le foto sono già strippate; se il solo testo supera 900 KB si scala indietro
+      // eliminando dal fondo (cronologia ordinata dal più recente al più vecchio).
+      const stripped = stripPhotos(data)
+      const activitiesByAge = [...stripped.activities].sort((a, b) => b.startTime - a.startTime)
+      let content = JSON.stringify({ ...stripped, activities: activitiesByAge })
+      while (new Blob([content]).size > MAX_GIST_BYTES && activitiesByAge.length > 0) {
+        activitiesByAge.pop()
+        content = JSON.stringify({ ...stripped, activities: activitiesByAge })
+      }
       const res = await fetch(`${GITHUB_API}/gists/${cfg.gistId}`, {
         method: 'PATCH',
         headers: {
@@ -143,7 +185,7 @@ export function useGistSync() {
         },
         body: JSON.stringify({
           files: {
-            [GIST_FILE_NAME]: { content: JSON.stringify(data) },
+            [GIST_FILE_NAME]: { content },
           },
         }),
       })
