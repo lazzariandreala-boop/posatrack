@@ -55,6 +55,35 @@ function mergeLocalPhotos(remote: StoreData, local: StoreData): StoreData {
   }
 }
 
+/**
+ * Unisce i dati locali con quelli remoti: l'insieme di tutte le attività/ordini
+ * viene preservato; in caso di id duplicato vince il locale (ha l'attività appena
+ * terminata / modificata).  Le note di cantiere vengono anch'esse unite.
+ */
+function mergeStoreData(local: StoreData, remote: StoreData): StoreData {
+  const localActIds = new Set(local.activities.map(a => a.id))
+  const activities  = [
+    ...remote.activities.filter(a => !localActIds.has(a.id)),
+    ...local.activities,
+  ]
+
+  const localWoIds = new Set((local.workOrders ?? []).map(wo => wo.id))
+  const workOrders = [
+    ...(remote.workOrders ?? []).filter(wo => !localWoIds.has(wo.id)),
+    ...(local.workOrders ?? []),
+  ]
+
+  const dayNotes = { ...(remote.dayNotes ?? {}), ...(local.dayNotes ?? {}) }
+
+  return {
+    ...remote,
+    activities,
+    workOrders:  workOrders.length ? workOrders : undefined,
+    dayNotes:    Object.keys(dayNotes).length ? dayNotes : undefined,
+    lastModified: Date.now(),
+  }
+}
+
 /** Chiave localStorage */
 const STORE_KEY = 'pt_v3'
 
@@ -107,16 +136,36 @@ export function useStore() {
   }
 
   /**
-   * Schedula un push su Gist con debounce di 2s.
-   * Annulla il push precedente se ancora in attesa.
+   * Pull → merge → push.
+   * Scarica il Gist remoto, unisce i dati con quelli locali (union merge,
+   * locale vince sui conflitti) e carica il risultato sul Gist.
+   * In questo modo nessuna modifica fatta da un altro device viene persa.
    */
-  function _schedulePush(data: StoreData): void {
+  async function syncNow(): Promise<void> {
+    if (!gistSync.isConfigured()) return
+
+    const local  = _load()
+    const remote = await gistSync.pull()
+
+    if (!remote) {
+      // Pull fallito (rete o config): push comunque i dati locali
+      await gistSync.push(local)
+      return
+    }
+
+    const merged = mergeLocalPhotos(mergeStoreData(local, remote), local)
+    localStorage.setItem(STORE_KEY, JSON.stringify(merged))
+    _version.value++
+    await gistSync.push(merged)
+  }
+
+  /**
+   * Schedula una sync completa (pull+merge+push) con debounce di 2s.
+   * Annulla la precedente chiamata ancora in attesa.
+   */
+  function _schedulePush(_data: StoreData): void {
     if (_pushTimer) clearTimeout(_pushTimer)
-    _pushTimer = setTimeout(() => {
-      if (gistSync.isConfigured()) {
-        gistSync.push(data)
-      }
-    }, 2000)
+    _pushTimer = setTimeout(() => syncNow(), 2000)
   }
 
   // ─────────────────────────────────────────────────────────────────────
@@ -391,6 +440,10 @@ export function useStore() {
 
   return {
     initSync,
+    syncNow,
+    syncStatus:   gistSync.syncStatus,
+    lastSync:     gistSync.lastSync,
+    isGistConfigured: gistSync.isConfigured,
     all,
     forDate,
     forRange,

@@ -191,7 +191,7 @@ async function renderBarChart(): Promise<void> {
   })
 }
 
-// Re-render al cambio periodo o al cambio vista
+// Re-render al cambio periodo, cambio vista, o cambio dati (es. dopo sync)
 watch(periodDays, async () => {
   await nextTick()
   await renderBarChart()
@@ -199,6 +199,13 @@ watch(periodDays, async () => {
 
 watch(() => appState.currentView.value, async (view) => {
   if (view === 'dashboard') {
+    await nextTick()
+    await renderBarChart()
+  }
+})
+
+watch(barChartData, async () => {
+  if (appState.currentView.value === 'dashboard') {
     await nextTick()
     await renderBarChart()
   }
@@ -416,4 +423,5 @@ onUnmounted(() => {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
 </style>

@@ -203,10 +203,12 @@ body {
     background-size: 32px 32px;
   }
 
-  // Le viste su desktop occupano tutta la larghezza
+  // Le viste su desktop occupano tutta la larghezza.
+  // min-height: 0 evita lo scroll inutile quando il contenuto è breve:
+  // il background a puntini è su #views-wrap (riempie sempre tutta l'area).
   .view {
     padding: 32px 36px 16px;
-    min-height: 100vh;
+    min-height: 0;
   }
 
   // Nasconde la bottom nav su desktop (si usa la sidebar)

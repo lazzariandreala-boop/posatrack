@@ -11,9 +11,11 @@
  */
 import { useAppState } from '~/composables/useAppState'
 import { useGistSync } from '~/composables/useGistSync'
+import { useStore }    from '~/composables/useStore'
 
 const { currentView, navigate, openGistSettings } = useAppState()
 const { syncStatus, isConfigured } = useGistSync()
+const store = useStore()
 </script>
 
 <template>
@@ -92,6 +94,25 @@ const { syncStatus, isConfigured } = useGistSync()
 
     <!-- Impostazioni Gist ────────────────────────────────────────── -->
     <div class="sidebar-bottom">
+
+      <!-- Pulsante sync manuale: visibile solo se Gist è configurato -->
+      <button
+        v-if="isConfigured()"
+        class="sidebar-nav-btn sidebar-sync-btn"
+        :disabled="syncStatus === 'syncing'"
+        @click="store.syncNow()"
+        :title="'Sincronizza ora'"
+      >
+        <svg viewBox="0 0 24 24" :class="{ spinning: syncStatus === 'syncing' }">
+          <polyline points="23 4 23 10 17 10"/>
+          <polyline points="1 20 1 14 7 14"/>
+          <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+        </svg>
+        <span v-if="syncStatus === 'syncing'">Sincronizzazione…</span>
+        <span v-else-if="syncStatus === 'error'" style="color:var(--red)">Errore sync</span>
+        <span v-else>Sincronizza ora</span>
+      </button>
+
       <button class="sidebar-nav-btn sidebar-settings-btn" @click="openGistSettings">
         <svg viewBox="0 0 24 24">
           <circle cx="12" cy="12" r="3"/>
@@ -214,6 +235,19 @@ const { syncStatus, isConfigured } = useGistSync()
 
 .sidebar-settings-btn {
   width: 100%;
+}
+
+/* Pulsante sync manuale */
+.sidebar-sync-btn {
+  &:disabled { opacity: .55; cursor: default; }
+
+  svg.spinning {
+    animation: sidebar-spin .9s linear infinite;
+  }
+}
+
+@keyframes sidebar-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* Badge di stato sincronizzazione */
