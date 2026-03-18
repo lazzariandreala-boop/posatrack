@@ -72,6 +72,9 @@ export interface Activity {
   /** Foto scontrini (usate per le attività di tipo "pausa_pranzo") */
   receiptPhotos?: Photo[]
 
+  /** Costo pranzo effettivo in € (solo pausa_pranzo, inserito dal posatore) */
+  lunchCostActual?: number
+
   /** true se l'attività è stata pre-creata da un ordine di lavoro pianificato */
   isPlanned?: boolean
 
@@ -122,6 +125,25 @@ export interface WorkOrder {
 
   /** Timestamp Unix ms di creazione */
   createdAt: number
+
+  // ── Costi previsione (inseriti dal responsabile) ─────────────────
+  /** Ore di trasferta A/R */
+  transferHours?: number
+  /** Viaggio previsione (€) */
+  travelCostEstimate?: number
+  /** Pranzo previsione (€) */
+  lunchCostEstimate?: number
+  /** Previsione costi materiale (€) */
+  materialCostEstimate?: number
+  /** Costi Posa Aggiuntivi – squadre esterne (€) */
+  externalTeamCost?: number
+  /** Budget ordine – Vendita Servizi (€) */
+  budget?: number
+  // ── Costi effettivi (aggiornati dopo la lavorazione) ─────────────
+  /** Viaggio effettivo (€) */
+  travelCostActual?: number
+  /** Pranzo effettivo (€) */
+  lunchCostActual?: number
 }
 
 /** Struttura root del dato in localStorage */

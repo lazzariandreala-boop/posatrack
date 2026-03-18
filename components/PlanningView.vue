@@ -10,6 +10,7 @@
 import { ref, computed } from 'vue'
 import { useStore }    from '~/composables/useStore'
 import { useAppState } from '~/composables/useAppState'
+import { useExport }   from '~/composables/useExport'
 import { ACT, MONTHS_IT } from '~/constants'
 import type { WorkOrder, ActivityType } from '~/types'
 
@@ -18,6 +19,7 @@ const WEEK_HEADERS = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom']
 
 const store    = useStore()
 const appState = useAppState()
+const exporter = useExport()
 
 // ── Data odierna (stringa YYYY-MM-DD) ─────────────────────────────────
 function toDateStr(d: Date): string {
@@ -115,14 +117,19 @@ function fmtDate(dateStr: string): string {
 // ── Form aggiunta / modifica ──────────────────────────────────────────
 const editingId    = ref<string | null>(null)
 const formData     = ref({
-  orderNumber:       '',
-  type:              'posa' as ActivityType,
-  detail:            '',
-  note:              '',
-  date:              todayStr,
-  estimatedDuration: 1,
-  estimatedTimeH:    0,
-  estimatedTimeM:    0,
+  orderNumber:          '',
+  type:                 'posa' as ActivityType,
+  detail:               '',
+  note:                 '',
+  date:                 todayStr,
+  estimatedDuration:    1,
+  estimatedTimeH:       0,
+  estimatedTimeM:       0,
+  travelCostEstimate:   0,
+  lunchCostEstimate:    0,
+  materialCostEstimate: 0,
+  externalTeamCost:     0,
+  budget:               0,
 })
 
 const planningTypes = ['posa', 'trasferimento', 'altro'] as const
@@ -130,14 +137,19 @@ const planningTypes = ['posa', 'trasferimento', 'altro'] as const
 function resetFormData(): void {
   editingId.value = null
   formData.value  = {
-    orderNumber:       '',
-    type:              formData.value.type, // mantieni il tab attivo
-    detail:            '',
-    note:              '',
-    date:              selectedDate.value,
-    estimatedDuration: 1,
-    estimatedTimeH:    0,
-    estimatedTimeM:    0,
+    orderNumber:          '',
+    type:                 formData.value.type,
+    detail:               '',
+    note:                 '',
+    date:                 selectedDate.value,
+    estimatedDuration:    1,
+    estimatedTimeH:       0,
+    estimatedTimeM:       0,
+    travelCostEstimate:   0,
+    lunchCostEstimate:    0,
+    materialCostEstimate: 0,
+    externalTeamCost:     0,
+    budget:               0,
   }
 }
 
@@ -145,14 +157,19 @@ function openEditForm(wo: WorkOrder): void {
   editingId.value = wo.id
   const et = wo.estimatedTime ?? 0
   formData.value  = {
-    orderNumber:       wo.orderNumber,
-    type:              wo.type as typeof planningTypes[number],
-    detail:            wo.detail,
-    note:              wo.note,
-    date:              wo.date,
-    estimatedDuration: 1,
-    estimatedTimeH:    Math.floor(et / 60),
-    estimatedTimeM:    et % 60,
+    orderNumber:          wo.orderNumber,
+    type:                 wo.type as typeof planningTypes[number],
+    detail:               wo.detail,
+    note:                 wo.note,
+    date:                 wo.date,
+    estimatedDuration:    1,
+    estimatedTimeH:       Math.floor(et / 60),
+    estimatedTimeM:       et % 60,
+    travelCostEstimate:   wo.travelCostEstimate ?? 0,
+    lunchCostEstimate:    wo.lunchCostEstimate ?? 0,
+    materialCostEstimate: wo.materialCostEstimate ?? 0,
+    externalTeamCost:     wo.externalTeamCost ?? 0,
+    budget:               wo.budget ?? 0,
   }
 }
 
@@ -171,6 +188,14 @@ function saveForm(): void {
 
   const estimatedTime = (formData.value.estimatedTimeH * 60) + formData.value.estimatedTimeM
 
+  const costFields = {
+    travelCostEstimate:   formData.value.travelCostEstimate   > 0 ? formData.value.travelCostEstimate   : undefined,
+    lunchCostEstimate:    formData.value.lunchCostEstimate    > 0 ? formData.value.lunchCostEstimate    : undefined,
+    materialCostEstimate: formData.value.materialCostEstimate > 0 ? formData.value.materialCostEstimate : undefined,
+    externalTeamCost:     formData.value.externalTeamCost     > 0 ? formData.value.externalTeamCost     : undefined,
+    budget:               formData.value.budget               > 0 ? formData.value.budget               : undefined,
+  }
+
   if (editingId.value) {
     store.updateWorkOrder(editingId.value, {
       orderNumber:   formData.value.orderNumber.trim(),
@@ -179,6 +204,7 @@ function saveForm(): void {
       note:          formData.value.note.trim(),
       date:          formData.value.date,
       estimatedTime: estimatedTime || undefined,
+      ...costFields,
     })
     appState.showToast('Pianificazione aggiornata')
   } else {
@@ -202,6 +228,7 @@ function saveForm(): void {
           dayIndex:          idx + 1,
           totalDays:         dur,
           createdAt:         nowTs + idx,
+          ...costFields,
         })
       })
       appState.showToast(`Lavorazione pianificata su ${dur} giorni (Lun–Ven)`)
@@ -216,6 +243,7 @@ function saveForm(): void {
         estimatedDuration: 1,
         estimatedTime:     estimatedTime || undefined,
         createdAt:         nowTs,
+        ...costFields,
       })
       appState.showToast('Lavorazione pianificata')
     }
@@ -422,10 +450,21 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
         <div class="hdr-day">PIANIFICAZIONE</div>
         <div class="page-title">Lavorazioni</div>
       </div>
-      <!-- <div style="color: var(--muted); font-size: 13px; text-align: right; line-height: 1.5;">
-        Solo desktop<br>
-        <span style="color: var(--dim)">Programma le lavorazioni future</span>
-      </div> -->
+      <div>
+        <button
+          class="btn btn-ghost btn-sm btn-icon"
+          @click="exporter.exportPlanning(
+            `${calYear}-${String(calMonth + 1).padStart(2, '0')}-01`,
+            (() => { const d = new Date(calYear, calMonth + 1, 0); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` })()
+          )"
+        >
+          <svg viewBox="0 0 24 24">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <path d="M3 9h18M3 15h18M9 3v18"/>
+          </svg>
+          Esporta Excel Previsioni
+        </button>
+      </div>
     </div>
 
     <!-- ── Gantt a tutta larghezza (SOPRA) ─────────────────────────── -->
@@ -656,7 +695,16 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
               <CatalogSelect v-model="formData.detail" value-field="label" />
             </template>
 
-            <!-- Campi TRASFERIMENTO: nessun campo specifico obbligatorio -->
+            <!-- Campi TRASFERIMENTO -->
+            <template v-if="formData.type === 'trasferimento'">
+              <label class="field-label">Destinazione</label>
+              <input v-model="formData.detail" class="field-input" type="text" placeholder="Es. Parco Comunale..." />
+              <label class="field-label" style="margin-top: 8px">Costi previsione</label>
+              <div>
+                <label class="field-label">Viaggio € (prev.)</label>
+                <input v-model.number="formData.travelCostEstimate" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
+              </div>
+            </template>
 
             <!-- Campi ALTRO -->
             <template v-if="formData.type === 'altro'">
@@ -716,6 +764,52 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
                 <span v-for="(d, i) in durationPreviewDates" :key="d" class="duration-preview-chip">{{ i + 1 }}. {{ fmtShortDate(d) }}</span>
               </div>
             </div>
+
+            <!-- Costi previsione POSA -->
+            <template v-if="formData.type === 'posa'">
+              <label class="field-label" style="margin-top: 8px">Costi previsione</label>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; margin-bottom:10px">
+                <div>
+                  <label class="field-label">Pranzo € (prev.)</label>
+                  <input v-model.number="formData.lunchCostEstimate" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
+                </div>
+                <div>
+                  <label class="field-label">Materiale € (prev.)</label>
+                  <input v-model.number="formData.materialCostEstimate" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
+                </div>
+                <div>
+                  <label class="field-label">Squadre esterne €</label>
+                  <input v-model.number="formData.externalTeamCost" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
+                </div>
+                <div>
+                  <label class="field-label">Budget ordine €</label>
+                  <input v-model.number="formData.budget" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
+                </div>
+              </div>
+            </template>
+
+            <!-- Costi previsione ALTRO -->
+            <template v-if="formData.type === 'altro'">
+              <label class="field-label" style="margin-top: 8px">Costi previsione</label>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; margin-bottom:10px">
+                <div>
+                  <label class="field-label">Pranzo € (prev.)</label>
+                  <input v-model.number="formData.lunchCostEstimate" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
+                </div>
+                <div>
+                  <label class="field-label">Materiale € (prev.)</label>
+                  <input v-model.number="formData.materialCostEstimate" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
+                </div>
+                <div>
+                  <label class="field-label">Squadre esterne €</label>
+                  <input v-model.number="formData.externalTeamCost" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
+                </div>
+                <div>
+                  <label class="field-label">Budget ordine €</label>
+                  <input v-model.number="formData.budget" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
+                </div>
+              </div>
+            </template>
 
             <!-- Note -->
             <label class="field-label">Note</label>

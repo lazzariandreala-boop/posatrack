@@ -9,9 +9,11 @@
  */
 import { useAppState } from '~/composables/useAppState'
 import { useGistSync } from '~/composables/useGistSync'
+import { useStore }    from '~/composables/useStore'
 
 const { currentView, navigate, openGistSettings } = useAppState()
 const { syncStatus, isConfigured } = useGistSync()
+const store = useStore()
 </script>
 
 <template>
@@ -28,6 +30,21 @@ const { syncStatus, isConfigured } = useGistSync()
         <polyline points="12 6 12 12 16 14"/>
       </svg>
       Timer
+    </button>
+
+    <!-- Sincronizza (center button, visibile solo se configurato) -->
+    <button
+      v-if="isConfigured()"
+      class="nav-tab"
+      :disabled="syncStatus === 'syncing'"
+      @click="store.syncNow()"
+    >
+      <svg viewBox="0 0 24 24" :class="{ spinning: syncStatus === 'syncing' }">
+        <polyline points="23 4 23 10 17 10"/>
+        <polyline points="1 20 1 14 7 14"/>
+        <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+      </svg>
+      Sincronizza
     </button>
 
     <!-- Impostazioni / Sync -->
@@ -68,6 +85,9 @@ const { syncStatus, isConfigured } = useGistSync()
   &.syncing { background: var(--orange); animation: blink 1s infinite; }
   &.idle    { background: var(--dim);    }
 }
+
+.spinning { animation: spin-nav .9s linear infinite; }
+@keyframes spin-nav { to { transform: rotate(360deg); } }
 </style>
 
 <!-- Gli stili di #bottom-nav e .nav-tab sono in main.scss (globali)

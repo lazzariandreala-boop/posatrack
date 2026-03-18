@@ -41,6 +41,14 @@ const dayActivities = computed<Activity[]>(() =>
   store.forDate(selectedDate.value).slice().sort((a, b) => a.startTime - b.startTime)
 )
 
+const completedActivities = computed<Activity[]>(() =>
+  dayActivities.value.filter(a => !(a.isPlanned && a.duration === 0))
+)
+
+const pendingPlannedActivities = computed<Activity[]>(() =>
+  dayActivities.value.filter(a => a.isPlanned && a.duration === 0)
+)
+
 // ── Navigazione tra giorni ─────────────────────────────────────────────
 
 /** Sposta la data di `delta` giorni */
@@ -358,7 +366,7 @@ onUnmounted(() => {
       <!-- Grafico doughnut distribuzione tempo -->
       <div>
         <div class="slabel">DISTRIBUZIONE TEMPO</div>
-        <div class="card" style="height: fit-content">
+        <div class="card">
           <div class="card-body">
 
             <!-- Empty state: nessun dato -->
@@ -397,7 +405,7 @@ onUnmounted(() => {
         <div class="card-body">
 
           <!-- Empty state -->
-          <div v-if="!dayActivities.length" class="empty">
+          <div v-if="!completedActivities.length" class="empty">
             <svg viewBox="0 0 24 24">
               <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>
             </svg>
@@ -407,12 +415,12 @@ onUnmounted(() => {
 
           <!-- Lista timeline -->
           <div
-            v-for="(a, index) in dayActivities"
+            v-for="(a, index) in completedActivities"
             :key="a.id"
             class="tl-item"
           >
             <!-- Linea verticale connettore (non sull'ultimo elemento) -->
-            <div v-if="index < dayActivities.length - 1" class="tl-line" />
+            <div v-if="index < completedActivities.length - 1" class="tl-line" />
 
             <!-- Pallino colorato -->
             <div class="tl-dot-col">
@@ -475,6 +483,29 @@ onUnmounted(() => {
         </div>
       </div>
     </div><!-- /summary-bottom-row -->
+
+    <!-- ── Pianificato non eseguito ──────────────────────────────── -->
+    <div v-if="pendingPlannedActivities.length" id="summary-planned-row">
+      <div class="slabel">PIANIFICATO NON ESEGUITO</div>
+      <div class="card" style="margin-bottom: 16px">
+        <div class="card-body">
+          <div
+            v-for="a in pendingPlannedActivities"
+            :key="a.id"
+            class="tl-item"
+          >
+            <div class="tl-dot-col">
+              <div class="tl-dot" :style="{ background: ACT[a.type]?.color || '#888', opacity: 0.4 }" />
+            </div>
+            <div class="tl-body">
+              <div class="tl-time" style="color: var(--dim)">Non eseguito</div>
+              <div class="tl-title" style="color: var(--muted)">{{ a.detail }}</div>
+              <div class="tl-sub">{{ ACT[a.type]?.label || a.type }}<template v-if="a.orderNumber"> · Ord. {{ a.orderNumber }}</template></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- ── Scontrini del giorno (solo desktop) ───────────────────── -->
     <div v-if="receiptActivities.length" id="summary-receipts-row">
@@ -574,7 +605,9 @@ onUnmounted(() => {
    ────────────────────────────────────────────────────────────────── */
 #chart-wrap {
   position: relative;
-  height: 200px;
+  height: 235px;
+  margin-top: 35px;
+  margin-bottom: -25px;
 }
 
 #chart-legend { margin-top: 16px; }

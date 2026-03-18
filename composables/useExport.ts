@@ -306,5 +306,265 @@ export function useExport() {
     }
   }
 
-  return { exportPDF, exportExcel }
+  // ─────────────────────────────────────────────────────────────────────
+  // EXPORT PLANNING (PREVISIONI)
+  // ─────────────────────────────────────────────────────────────────────
+
+  async function exportPlanning(fromDate: string, toDate: string): Promise<void> {
+    const workOrders = store.getAllWorkOrders()
+      .filter(wo => wo.date >= fromDate && wo.date <= toDate)
+      .sort((a, b) => a.date.localeCompare(b.date))
+
+    if (!workOrders.length) {
+      appState.showToast('⚠️ Nessun ordine nel periodo selezionato')
+      return
+    }
+
+    appState.showToast('⏳ Generazione Excel previsioni...')
+
+    try {
+      function isoWeek(dateStr: string): number {
+        const d = new Date(dateStr + 'T12:00:00')
+        d.setHours(0, 0, 0, 0)
+        d.setDate(d.getDate() + 4 - (d.getDay() || 7))
+        const y0 = new Date(d.getFullYear(), 0, 1)
+        return Math.ceil(((d.getTime() - y0.getTime()) / 86400000 + 1) / 7)
+      }
+
+      // Escaping caratteri XML speciali
+      function esc(v: any): string {
+        if (v === null || v === undefined || v === '') return ''
+        return String(v)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+      }
+
+      // Genera tag <Cell> SpreadsheetML
+      function xmlCell(v: any, styleId: string): string {
+        if (v === '' || v === null || v === undefined) {
+          return `<Cell ss:StyleID="${styleId}"><Data ss:Type="String"></Data></Cell>`
+        }
+        if (typeof v === 'number') {
+          return `<Cell ss:StyleID="${styleId}"><Data ss:Type="Number">${v}</Data></Cell>`
+        }
+        return `<Cell ss:StyleID="${styleId}"><Data ss:Type="String">${esc(v)}</Data></Cell>`
+      }
+
+      const DAYS_IT_FULL   = ['Domenica','Lunedì','Martedì','Mercoledì','Giovedì','Venerdì','Sabato']
+      const MONTHS_IT_FULL = ['gennaio','febbraio','marzo','aprile','maggio','giugno',
+                               'luglio','agosto','settembre','ottobre','novembre','dicembre']
+
+      const headers = [
+        'Stato', 'Sett. ISO', 'Data', 'N° Ordine',
+        'Trasferta A/R (h)', 'Cantiere',
+        'Ore', 'Cantiere 2', 'Ore 2',
+        'Viaggio € prev.', 'Viaggio € eff.',
+        'Pranzo € prev.',  'Pranzo € eff.',
+        'Mat. € prev.',
+        'Note',
+        'Tot mat.+trasferta', 'Tot costi posa',
+        'Squadre esterne €', 'Budget €',
+      ]
+
+      // ── Costruzione righe dati ─────────────────────────────────────
+      const dataRows: { row: any[], dark: boolean }[] = []
+      let lastDate = ''
+      let darkBand = false
+
+      for (const wo of workOrders) {
+        if (wo.date !== lastDate) {
+          lastDate = wo.date
+          darkBand = !darkBand
+        }
+
+        const linkedActs = store.all().filter(a =>
+          a.workOrderId === wo.id ||
+          (a.date === wo.date && a.orderNumber === wo.orderNumber && !!a.orderNumber)
+        )
+
+        // Stato
+        const posaLinked = linkedActs.filter(a => a.type === 'posa')
+        let stato: string
+        if (!linkedActs.length) {
+          stato = 'Previsione'
+        } else if (linkedActs.every(a => a.endTime !== null) && posaLinked.length > 0) {
+          stato = 'Completato'
+        } else if (linkedActs.some(a => a.endTime === null)) {
+          stato = 'Iniziato'
+        } else {
+          stato = 'Previsione'
+        }
+
+        const week    = isoWeek(wo.date)
+        const dt      = new Date(wo.date + 'T12:00:00')
+        const dataFmt = `${DAYS_IT_FULL[dt.getDay()]} ${dt.getDate()} ${MONTHS_IT_FULL[dt.getMonth()]} ${dt.getFullYear()}`
+
+        // Trasferta ore (effettivo se disponibile, altrimenti stima)
+        const transferAct = linkedActs.find(a => a.type === 'trasferimento')
+        let transferHours: number | string
+        if (transferAct?.duration != null) {
+          transferHours = Math.round(transferAct.duration / 360) / 10
+        } else if (wo.type === 'trasferimento' && wo.estimatedTime) {
+          transferHours = wo.estimatedTime / 60
+        } else {
+          transferHours = ''
+        }
+
+        // Posa ore (effettivo se disponibile, altrimenti stima)
+        const posaActs = linkedActs
+          .filter(a => a.type === 'posa')
+          .sort((a, b) => a.startTime - b.startTime)
+
+        const cantiere1 = wo.detail
+        let ore1: number | string
+        if (posaActs[0]?.duration != null) {
+          ore1 = Math.round(posaActs[0].duration / 3600 * 10) / 10
+        } else {
+          ore1 = (wo.estimatedTime ?? 0) / 60 || ''
+        }
+
+        let cantiere2 = ''
+        let ore2: number | string = ''
+        if (posaActs.length > 1) {
+          cantiere2 = posaActs[1].detail
+          ore2 = posaActs[1].duration != null
+            ? Math.round(posaActs[1].duration / 3600 * 10) / 10
+            : ''
+        }
+
+        // Costi viaggio: stima e effettivo
+        const viaggioEst = wo.travelCostEstimate ?? ''
+        const viaggioEff = wo.travelCostActual   ?? ''
+
+        // Costi pranzo: stima WO, effettivo dalla pausa pranzo collegata
+        const pranzoEst = wo.lunchCostEstimate ?? ''
+        const lunchAct  = linkedActs.find(a => a.type === 'pausa_pranzo')
+        const pranzoEff = lunchAct?.lunchCostActual ?? ''
+
+        // Totali (effettivo se disponibile, altrimenti stima)
+        const transferHoursNum = typeof transferHours === 'number' ? transferHours : 0
+        const posHours = (typeof ore1 === 'number' ? ore1 : 0) + (typeof ore2 === 'number' ? ore2 : 0)
+        const allHours = transferHoursNum + posHours
+        const workerCost = allHours <= 8
+          ? allHours * 21
+          : 8 * 21 + (allHours - 8) * 27
+
+        const viaggioForTot = (wo.travelCostActual ?? wo.travelCostEstimate ?? 0)
+        const pranzoForTot  = (lunchAct?.lunchCostActual ?? wo.lunchCostEstimate ?? 0)
+        const matCost       = wo.materialCostEstimate ?? 0
+        const totMat  = (viaggioForTot + pranzoForTot + matCost) || ''
+        const totPosa = workerCost + (typeof totMat === 'number' ? totMat : 0) || ''
+
+        const noteLinked = linkedActs.map(a => a.note).filter(Boolean).join('; ')
+        const noteVal    = [wo.note, noteLinked].filter(Boolean).join('; ') || ''
+
+        dataRows.push({
+          dark: darkBand,
+          row: [
+            stato, week, dataFmt, wo.orderNumber,
+            transferHours, cantiere1, ore1, cantiere2, ore2,
+            viaggioEst, viaggioEff, pranzoEst, pranzoEff,
+            wo.materialCostEstimate ?? '',
+            noteVal, totMat, totPosa,
+            wo.externalTeamCost ?? '', wo.budget ?? '',
+          ],
+        })
+      }
+
+      // ── Generazione SpreadsheetML XML (Excel 2003) ─────────────────
+      // Questo formato supporta stili nativamente senza dipendenze aggiuntive.
+      const headerRowXml = '<Row ss:Height="32">'
+        + headers.map(h => xmlCell(h, 'sHdr')).join('')
+        + '</Row>'
+
+      const dataRowsXml = dataRows.map(item => {
+        const sid = item.dark ? 'sDark' : 'sLight'
+        return '<Row>' + item.row.map(v => xmlCell(v, sid)).join('') + '</Row>'
+      }).join('\n')
+
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+ <Styles>
+  <Style ss:ID="Default">
+   <Alignment ss:Vertical="Center"/>
+   <Font ss:FontName="Calibri" ss:Size="9" ss:Color="#111111"/>
+  </Style>
+  <Style ss:ID="sHdr">
+   <Alignment ss:Horizontal="Center" ss:Vertical="Center" ss:WrapText="1"/>
+   <Font ss:FontName="Calibri" ss:Size="9" ss:Bold="1" ss:Color="#FFFFFF"/>
+   <Interior ss:Color="#1A1A1A" ss:Pattern="Solid"/>
+   <Borders>
+    <Border ss:Position="Bottom" ss:LineStyle="Continuous" ss:Weight="2" ss:Color="#FF5F00"/>
+   </Borders>
+  </Style>
+  <Style ss:ID="sLight">
+   <Alignment ss:Vertical="Center"/>
+   <Font ss:FontName="Calibri" ss:Size="9"/>
+   <Interior ss:Color="#FFFFFF" ss:Pattern="Solid"/>
+  </Style>
+  <Style ss:ID="sDark">
+   <Alignment ss:Vertical="Center"/>
+   <Font ss:FontName="Calibri" ss:Size="9"/>
+   <Interior ss:Color="#EFEFEF" ss:Pattern="Solid"/>
+  </Style>
+ </Styles>
+ <Worksheet ss:Name="Previsioni">
+  <Table ss:DefaultColumnWidth="80">
+   <Column ss:Width="90"/>
+   <Column ss:Width="55"/>
+   <Column ss:Width="180"/>
+   <Column ss:Width="90"/>
+   <Column ss:Width="70"/>
+   <Column ss:Width="200"/>
+   <Column ss:Width="45"/>
+   <Column ss:Width="200"/>
+   <Column ss:Width="45"/>
+   <Column ss:Width="75"/>
+   <Column ss:Width="75"/>
+   <Column ss:Width="75"/>
+   <Column ss:Width="75"/>
+   <Column ss:Width="80"/>
+   <Column ss:Width="220"/>
+   <Column ss:Width="120"/>
+   <Column ss:Width="95"/>
+   <Column ss:Width="95"/>
+   <Column ss:Width="80"/>
+   ${headerRowXml}
+   ${dataRowsXml}
+  </Table>
+  <WorksheetOptions xmlns="urn:schemas-microsoft-com:office:excel">
+   <FreezePanes/>
+   <FrozenNoSplit/>
+   <SplitHorizontal>1</SplitHorizontal>
+   <TopRowBottomPane>1</TopRowBottomPane>
+   <ActivePane>2</ActivePane>
+  </WorksheetOptions>
+ </Worksheet>
+</Workbook>`
+
+      // Download
+      const blob = new Blob(['\uFEFF' + xml], { type: 'application/vnd.ms-excel;charset=utf-8' })
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href     = url
+      a.download = `posatrack_previsione_${fromDate}_${toDate}.xls`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      setTimeout(() => URL.revokeObjectURL(url), 100)
+      appState.showToast('✅ Excel previsioni scaricato!')
+
+    } catch (err) {
+      console.error('[useExport] Export Planning error:', err)
+      appState.showToast('❌ Errore generazione Excel')
+    }
+  }
+
+  return { exportPDF, exportExcel, exportPlanning }
 }
