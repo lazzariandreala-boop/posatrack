@@ -531,6 +531,7 @@ export function useExport() {
    <Column ss:Width="75"/>
    <Column ss:Width="75"/>
    <Column ss:Width="80"/>
+   <Column ss:Width="75"/>
    <Column ss:Width="220"/>
    <Column ss:Width="120"/>
    <Column ss:Width="95"/>
