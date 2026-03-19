@@ -125,6 +125,8 @@ const _version = ref(0)
 
 /** Mutex: impedisce sync concorrenti che causano 409 Conflict su GitHub */
 let _syncInProgress = false
+/** Se true, una sync verrà eseguita non appena quella corrente termina */
+let _syncQueued = false
 
 export function useStore() {
 
@@ -149,30 +151,34 @@ export function useStore() {
     }
   }
 
-  /** Serializza e salva i dati nel localStorage e invalida le computed. */
+  /** Serializza e salva i dati nel localStorage e invalida le computed. Nessuna API call. */
   function _save(data: StoreData): void {
     data.lastModified = Date.now()
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(data))
-      _version.value++ // notifica Vue che i dati sono cambiati
+      _version.value++
     } catch (e) {
-      // QuotaExceededError: localStorage pieno (probabile per le foto base64)
       console.error('[useStore] localStorage pieno:', e)
       alert('Attenzione: memoria locale quasi esaurita. Esporta i dati e cancella le attività vecchie.')
     }
   }
 
   /**
-   * Pull → merge → push.
-   * Scarica il Gist remoto, unisce i dati con quelli locali (union merge,
-   * il remoto vince se ha terminato un'attività ancora aperta in locale)
-   * e carica il risultato sul Gist.
+   * Pull → merge → push (una singola chiamata per volta).
+   * Se una sync è già in corso, la marca come "in coda": al termine
+   * della prima verrà eseguita automaticamente una seconda passata
+   * per caricare eventuali modifiche arrivate nel frattempo.
    */
   async function syncNow(): Promise<void> {
     if (!gistSync.isConfigured()) return
-    if (_syncInProgress) return   // evita 409 Conflict da chiamate concorrenti
+
+    if (_syncInProgress) {
+      _syncQueued = true   // riprova dopo che la sync corrente finisce
+      return
+    }
 
     _syncInProgress = true
+    _syncQueued     = false
     const { showToast } = useAppState()
     try {
       const local  = _load()
@@ -190,6 +196,10 @@ export function useStore() {
       if (ok) showToast('Sincronizzazione completata')
     } finally {
       _syncInProgress = false
+      if (_syncQueued) {
+        _syncQueued = false
+        setTimeout(() => syncNow(), 1000)   // aspetta 1s prima del retry
+      }
     }
   }
 

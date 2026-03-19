@@ -148,6 +148,7 @@ async function stopActivity(): Promise<void> {
   appState.currentActivity.value = null
   appState.setGpsLoading(false)
   appState.showToast('Attività terminata')
+  store.syncNow()   // unico momento in cui si pushano i dati sul Gist
   initCostInputs()
 }
 
