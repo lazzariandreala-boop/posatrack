@@ -1,42 +1,42 @@
 import process from 'node:process';globalThis._importMeta_={url:import.meta.url,env:process.env};import { tmpdir } from 'node:os';
-import { defineEventHandler, handleCacheHeaders, splitCookiesString, createEvent, fetchWithEvent, isEvent, eventHandler, setHeaders, sendRedirect, proxyRequest, getRequestHeader, setResponseHeaders, setResponseStatus, send, getRequestHeaders, setResponseHeader, appendResponseHeader, getRequestURL, getResponseHeader, removeResponseHeader, createError, getQuery as getQuery$1, readBody, createApp, createRouter as createRouter$1, toNodeListener, lazyEventHandler, getResponseStatus, getRouterParam, getResponseStatusText } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/h3/dist/index.mjs';
+import { defineEventHandler, handleCacheHeaders, splitCookiesString, createEvent, fetchWithEvent, isEvent, eventHandler, setHeaders, sendRedirect, proxyRequest, getRequestHeader, setResponseHeaders, setResponseStatus, send, getRequestHeaders, setResponseHeader, appendResponseHeader, getRequestURL, getResponseHeader, removeResponseHeader, createError, getQuery as getQuery$1, readBody, createApp, createRouter as createRouter$1, toNodeListener, lazyEventHandler, getResponseStatus, getRouterParam, getResponseStatusText } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/h3/dist/index.mjs';
 import { Server } from 'node:http';
 import { resolve, dirname, join } from 'node:path';
 import nodeCrypto from 'node:crypto';
 import { parentPort, threadId } from 'node:worker_threads';
-import { escapeHtml } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/@vue/shared/dist/shared.cjs.js';
-import { createRenderer, getRequestDependencies, getPreloadLinks, getPrefetchLinks } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/vue-bundle-renderer/dist/runtime.mjs';
-import { parseURL, withoutBase, joinURL, getQuery, withQuery, withTrailingSlash, decodePath, withLeadingSlash, withoutTrailingSlash, joinRelativeURL } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/ufo/dist/index.mjs';
-import { renderToString } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/vue/server-renderer/index.mjs';
-import destr, { destr as destr$1 } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/destr/dist/index.mjs';
-import { createHooks } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/hookable/dist/index.mjs';
-import { createFetch, Headers as Headers$1 } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/ofetch/dist/node.mjs';
-import { fetchNodeRequestHandler, callNodeRequestHandler } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/node-mock-http/dist/index.mjs';
-import { createStorage, prefixStorage } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/unstorage/dist/index.mjs';
-import unstorage_47drivers_47fs from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/unstorage/drivers/fs.mjs';
-import { digest } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/ohash/dist/index.mjs';
-import { klona } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/klona/dist/index.mjs';
-import defu, { defuFn } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/defu/dist/defu.mjs';
-import { snakeCase } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/scule/dist/index.mjs';
-import { getContext } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/unctx/dist/index.mjs';
-import { toRouteMatcher, createRouter } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/radix3/dist/index.mjs';
+import { escapeHtml } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/@vue/shared/dist/shared.cjs.js';
+import { createRenderer, getRequestDependencies, getPreloadLinks, getPrefetchLinks } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/vue-bundle-renderer/dist/runtime.mjs';
+import { parseURL, withoutBase, joinURL, getQuery, withQuery, withTrailingSlash, decodePath, withLeadingSlash, withoutTrailingSlash, joinRelativeURL } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/ufo/dist/index.mjs';
+import { renderToString } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/vue/server-renderer/index.mjs';
+import destr, { destr as destr$1 } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/destr/dist/index.mjs';
+import { createHooks } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/hookable/dist/index.mjs';
+import { createFetch, Headers as Headers$1 } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/ofetch/dist/node.mjs';
+import { fetchNodeRequestHandler, callNodeRequestHandler } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/node-mock-http/dist/index.mjs';
+import { createStorage, prefixStorage } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/unstorage/dist/index.mjs';
+import unstorage_47drivers_47fs from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/unstorage/drivers/fs.mjs';
+import { digest } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/ohash/dist/index.mjs';
+import { klona } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/klona/dist/index.mjs';
+import defu, { defuFn } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/defu/dist/defu.mjs';
+import { snakeCase } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/scule/dist/index.mjs';
+import { getContext } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/unctx/dist/index.mjs';
+import { toRouteMatcher, createRouter } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/radix3/dist/index.mjs';
 import { readFile } from 'node:fs/promises';
-import consola, { consola as consola$1 } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/consola/dist/index.mjs';
-import { ErrorParser } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/youch-core/build/index.js';
-import { Youch } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/youch/build/index.js';
-import { SourceMapConsumer } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/source-map/source-map.js';
+import consola, { consola as consola$1 } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/consola/dist/index.mjs';
+import { ErrorParser } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/youch-core/build/index.js';
+import { Youch } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/youch/build/index.js';
+import { SourceMapConsumer } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/source-map/source-map.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { stringify, uneval } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/devalue/index.js';
-import { captureRawStackTrace, parseRawStackTrace } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/errx/dist/index.js';
-import { isVNode, isRef, toValue } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/vue/index.mjs';
+import { stringify, uneval } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/devalue/index.js';
+import { captureRawStackTrace, parseRawStackTrace } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/errx/dist/index.js';
+import { isVNode, isRef, toValue } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/vue/index.mjs';
 import { promises } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { dirname as dirname$1, resolve as resolve$1 } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/pathe/dist/index.mjs';
-import { createHead as createHead$1, propsToString, renderSSRHead } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/unhead/dist/server.mjs';
-import { DeprecationsPlugin, PromisesPlugin, TemplateParamsPlugin, AliasSortingPlugin } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/unhead/dist/plugins.mjs';
-import { walkResolver } from 'file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/node_modules/unhead/dist/utils.mjs';
+import { dirname as dirname$1, resolve as resolve$1 } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/pathe/dist/index.mjs';
+import { createHead as createHead$1, propsToString, renderSSRHead } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/unhead/dist/server.mjs';
+import { DeprecationsPlugin, PromisesPlugin, TemplateParamsPlugin, AliasSortingPlugin } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/unhead/dist/plugins.mjs';
+import { walkResolver } from 'file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/node_modules/unhead/dist/utils.mjs';
 
-const serverAssets = [{"baseName":"server","dir":"/home/andrealazzari/Personal_Repo/posatrack-nuxt/server/assets"}];
+const serverAssets = [{"baseName":"server","dir":"/home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/server/assets"}];
 
 const assets$1 = createStorage();
 
@@ -48,11 +48,11 @@ const storage = createStorage({});
 
 storage.mount('/assets', assets$1);
 
-storage.mount('root', unstorage_47drivers_47fs({"driver":"fs","readOnly":true,"base":"/home/andrealazzari/Personal_Repo/posatrack-nuxt","watchOptions":{"ignored":[null]}}));
-storage.mount('src', unstorage_47drivers_47fs({"driver":"fs","readOnly":true,"base":"/home/andrealazzari/Personal_Repo/posatrack-nuxt/server","watchOptions":{"ignored":[null]}}));
-storage.mount('build', unstorage_47drivers_47fs({"driver":"fs","readOnly":false,"base":"/home/andrealazzari/Personal_Repo/posatrack-nuxt/.nuxt"}));
-storage.mount('cache', unstorage_47drivers_47fs({"driver":"fs","readOnly":false,"base":"/home/andrealazzari/Personal_Repo/posatrack-nuxt/.nuxt/cache"}));
-storage.mount('data', unstorage_47drivers_47fs({"driver":"fs","base":"/home/andrealazzari/Personal_Repo/posatrack-nuxt/.data/kv"}));
+storage.mount('root', unstorage_47drivers_47fs({"driver":"fs","readOnly":true,"base":"/home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack","watchOptions":{"ignored":[null]}}));
+storage.mount('src', unstorage_47drivers_47fs({"driver":"fs","readOnly":true,"base":"/home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/server","watchOptions":{"ignored":[null]}}));
+storage.mount('build', unstorage_47drivers_47fs({"driver":"fs","readOnly":false,"base":"/home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/.nuxt"}));
+storage.mount('cache', unstorage_47drivers_47fs({"driver":"fs","readOnly":false,"base":"/home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/.nuxt/cache"}));
+storage.mount('data', unstorage_47drivers_47fs({"driver":"fs","base":"/home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/.data/kv"}));
 
 function useStorage(base = "") {
   return base ? prefixStorage(storage, base) : storage;
@@ -2025,13 +2025,13 @@ if (!window.__NUXT_DEVTOOLS_TIME_METRIC__) {
 window.__NUXT_DEVTOOLS_TIME_METRIC__.appInit = Date.now()
 `;
 
-const _XbauFVW6LvPbDogeOmDGhy5ATwzFdcxg39j4FtNDsM = (function(nitro) {
+const _69LDPukH7_TqtHypGaT39vr0fNsRIZseg4AhAY9B3TQ = (function(nitro) {
   nitro.hooks.hook("render:html", (htmlContext) => {
     htmlContext.head.push(`<script>${script}<\/script>`);
   });
 });
 
-const rootDir = "/home/andrealazzari/Personal_Repo/posatrack-nuxt";
+const rootDir = "/home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack";
 
 const appHead = {"meta":[{"name":"viewport","content":"width=device-width, initial-scale=1.0, viewport-fit=cover"},{"charset":"utf-8"},{"name":"apple-mobile-web-app-capable","content":"yes"},{"name":"theme-color","content":"#121212"}],"link":[{"rel":"stylesheet","href":"https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap"},{"rel":"stylesheet","href":"https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"}],"style":[],"script":[],"noscript":[],"charset":"utf-8","viewport":"width=device-width, initial-scale=1.0, viewport-fit=cover","title":"PosaTrack"};
 
@@ -2056,7 +2056,7 @@ const asyncContext = getContext("nuxt-dev", {
 	asyncContext: true,
 	AsyncLocalStorage
 });
-const _f_bAETmY2LfSG_QCDY24liAUmJNlzR8FxyaWb811Ds = (nitroApp) => {
+const _aX8IBkk5Ixcx05K2YZxlC5qKz09sCxASmGfBVtYAyc = (nitroApp) => {
 	const handler = nitroApp.h3App.handler;
 	nitroApp.h3App.handler = (event) => {
 		return asyncContext.callAsync({
@@ -2130,8 +2130,8 @@ function onConsoleLog(callback) {
 }
 
 const plugins = [
-  _XbauFVW6LvPbDogeOmDGhy5ATwzFdcxg39j4FtNDsM,
-_f_bAETmY2LfSG_QCDY24liAUmJNlzR8FxyaWb811Ds
+  _69LDPukH7_TqtHypGaT39vr0fNsRIZseg4AhAY9B3TQ,
+_aX8IBkk5Ixcx05K2YZxlC5qKz09sCxASmGfBVtYAyc
 ];
 
 const assets = {};
@@ -2159,7 +2159,7 @@ function getAsset (id) {
 
 const METHODS = /* @__PURE__ */ new Set(["HEAD", "GET"]);
 const EncodingMap = { gzip: ".gz", br: ".br" };
-const _N0ibc6 = eventHandler((event) => {
+const __mrYE9 = eventHandler((event) => {
   if (event.method && !METHODS.has(event.method)) {
     return;
   }
@@ -2303,7 +2303,7 @@ const APP_ROOT_CLOSE_TAG = `</${appRootTag}>`;
 // @ts-expect-error file will be produced after app build
 const getServerEntry = () => Promise.resolve().then(function () { return server$1; }).then((r) => r.default || r);
 // @ts-expect-error file will be produced after app build
-const getClientManifest = () => import('file:///home/andrealazzari/Personal_Repo/posatrack-nuxt/.nuxt//dist/server/client.manifest.mjs').then((r) => r.default || r).then((r) => typeof r === "function" ? r() : r);
+const getClientManifest = () => import('file:///home/andrealazzari/Personal_Repo/Clienti/Pozza/posatrack/.nuxt//dist/server/client.manifest.mjs').then((r) => r.default || r).then((r) => typeof r === "function" ? r() : r);
 // -- SSR Renderer --
 const getSSRRenderer = lazyCachedFunction(async () => {
 	// Load server bundle
@@ -2583,13 +2583,13 @@ async function getIslandContext(event) {
 	return ctx;
 }
 
-const _lazy_butJuF = () => Promise.resolve().then(function () { return renderer$1; });
+const _lazy_wyMOOP = () => Promise.resolve().then(function () { return renderer$1; });
 
 const handlers = [
-  { route: '', handler: _N0ibc6, lazy: false, middleware: true, method: undefined },
-  { route: '/__nuxt_error', handler: _lazy_butJuF, lazy: true, middleware: false, method: undefined },
+  { route: '', handler: __mrYE9, lazy: false, middleware: true, method: undefined },
+  { route: '/__nuxt_error', handler: _lazy_wyMOOP, lazy: true, middleware: false, method: undefined },
   { route: '/__nuxt_island/**', handler: _SxA8c9, lazy: false, middleware: false, method: undefined },
-  { route: '/**', handler: _lazy_butJuF, lazy: true, middleware: false, method: undefined }
+  { route: '/**', handler: _lazy_wyMOOP, lazy: true, middleware: false, method: undefined }
 ];
 
 function createNitroApp() {

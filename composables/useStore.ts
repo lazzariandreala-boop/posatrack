@@ -61,10 +61,18 @@ function mergeLocalPhotos(remote: StoreData, local: StoreData): StoreData {
  * terminata / modificata).  Le note di cantiere vengono anch'esse unite.
  */
 function mergeStoreData(local: StoreData, remote: StoreData): StoreData {
+  // Tombstone: unione degli ID eliminati da entrambi i lati
+  const deletedIds = new Set([
+    ...(local.deletedActivityIds  ?? []),
+    ...(remote.deletedActivityIds ?? []),
+  ])
+
   const localActIds = new Set(local.activities.map(a => a.id))
   const activities  = [
-    ...remote.activities.filter(a => !localActIds.has(a.id)),
-    ...local.activities,
+    // Prende dal remoto solo ciò che non è già in locale E non è stato eliminato
+    ...remote.activities.filter(a => !localActIds.has(a.id) && !deletedIds.has(a.id)),
+    // Filtra anche le locali per sicurezza (es. tombstone arrivato dal remoto)
+    ...local.activities.filter(a => !deletedIds.has(a.id)),
   ]
 
   const localWoIds = new Set((local.workOrders ?? []).map(wo => wo.id))
@@ -78,9 +86,10 @@ function mergeStoreData(local: StoreData, remote: StoreData): StoreData {
   return {
     ...remote,
     activities,
-    workOrders:  workOrders.length ? workOrders : undefined,
-    dayNotes:    Object.keys(dayNotes).length ? dayNotes : undefined,
-    lastModified: Date.now(),
+    workOrders:          workOrders.length ? workOrders : undefined,
+    dayNotes:            Object.keys(dayNotes).length ? dayNotes : undefined,
+    deletedActivityIds:  deletedIds.size ? [...deletedIds] : undefined,
+    lastModified:        Date.now(),
   }
 }
 
@@ -254,10 +263,12 @@ export function useStore() {
     }
   }
 
-  /** Rimuove un'attività per id. */
+  /** Rimuove un'attività per id e registra il tombstone per evitare re-inserimenti dal sync. */
   function remove(id: string): void {
     const data = _load()
     data.activities = data.activities.filter(a => a.id !== id)
+    if (!data.deletedActivityIds) data.deletedActivityIds = []
+    if (!data.deletedActivityIds.includes(id)) data.deletedActivityIds.push(id)
     _save(data)
   }
 

@@ -154,15 +154,26 @@ async function stopActivity(): Promise<void> {
 
 // ── Elimina attività ──────────────────────────────────────────────────
 
+const pendingDeleteId = ref<string | null>(null)
+
 function deleteActivity(activityId: string): void {
-  if (!confirm('Eliminare questa attività?')) return
-  // Se è l'attività in corso, stoppa il timer prima
-  if (appState.currentActivity.value?.id === activityId) {
+  pendingDeleteId.value = activityId
+}
+
+function confirmDelete(): void {
+  const id = pendingDeleteId.value
+  if (!id) return
+  pendingDeleteId.value = null
+  if (appState.currentActivity.value?.id === id) {
     timer.stop()
     appState.currentActivity.value = null
   }
-  store.remove(activityId)
+  store.remove(id)
   appState.showToast('Attività eliminata')
+}
+
+function cancelDelete(): void {
+  pendingDeleteId.value = null
 }
 
 // ── Riprendi attività ─────────────────────────────────────────────────
@@ -773,6 +784,17 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
     <input ref="sitePhotoInputRef" type="file" accept="image/*" capture="environment" multiple style="display: none"
       @change="handleSitePhotoInput">
 
+    <!-- Popup conferma eliminazione attività -->
+    <div v-if="pendingDeleteId" class="confirm-overlay" @click.self="cancelDelete">
+      <div class="confirm-dialog">
+        <p class="confirm-msg">Eliminare questa attività?<br><span class="confirm-sub">L'operazione non è reversibile.</span></p>
+        <div class="confirm-actions">
+          <button class="confirm-btn cancel-btn" @click="cancelDelete">Annulla</button>
+          <button class="confirm-btn delete-confirm-btn" @click="confirmDelete">Elimina</button>
+        </div>
+      </div>
+    </div>
+
   </div><!-- /view-timer -->
 </template>
 
@@ -1350,5 +1372,70 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
     gap: 8px;
     margin-top: 8px;
   }
+}
+
+/* ── Popup conferma eliminazione ─────────────────────────────────── */
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.confirm-dialog {
+  background: var(--card-bg, #1e1e1e);
+  border: 1px solid var(--border, #333);
+  border-radius: var(--r-lg, 14px);
+  padding: 24px 28px;
+  max-width: 320px;
+  width: 90%;
+  text-align: center;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+
+.confirm-msg {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 8px;
+  line-height: 1.4;
+}
+
+.confirm-sub {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted, #888);
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+  justify-content: center;
+}
+
+.confirm-btn {
+  flex: 1;
+  padding: 10px 16px;
+  border-radius: var(--r-sm, 8px);
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.15s;
+
+  &:active { opacity: 0.75; }
+}
+
+.cancel-btn {
+  background: var(--surface, #2a2a2a);
+  color: var(--text, #fff);
+}
+
+.delete-confirm-btn {
+  background: #e53935;
+  color: #fff;
 }
 </style>

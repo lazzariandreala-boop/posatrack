@@ -157,6 +157,12 @@ export interface StoreData {
   workOrders?: WorkOrder[]
   /** Timestamp Unix ms dell'ultima scrittura – usato per conflict resolution con Gist */
   lastModified?: number
+  /**
+   * Tombstone: ID delle attività eliminate intenzionalmente.
+   * Usato dal merge per evitare che un'attività cancellata venga re-aggiunta
+   * dal Gist remoto che la contiene ancora.
+   */
+  deletedActivityIds?: string[]
 }
 
 /** Configurazione GitHub Gist per la sincronizzazione remota */
