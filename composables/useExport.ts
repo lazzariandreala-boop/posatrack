@@ -362,7 +362,7 @@ export function useExport() {
         'Ore', 'Cantiere 2', 'Ore 2',
         'Viaggio € prev.', 'Viaggio € eff.',
         'Pranzo € prev.',  'Pranzo € eff.',
-        'Mat. € prev.',
+        'Mat. € prev.',    'Mat. € eff.',
         'Note',
         'Tot mat.+trasferta', 'Tot costi posa',
         'Squadre esterne €', 'Budget €',
@@ -438,10 +438,11 @@ export function useExport() {
         const viaggioEst = wo.travelCostEstimate ?? ''
         const viaggioEff = wo.travelCostActual   ?? ''
 
-        // Costi pranzo: stima WO, effettivo dalla pausa pranzo collegata
+        // Costi pranzo e materiale: stima dal WO, effettivo dai costi giornalieri
+        const dayC      = store.getDayCosts(wo.date)
         const pranzoEst = wo.lunchCostEstimate ?? ''
-        const lunchAct  = linkedActs.find(a => a.type === 'pausa_pranzo')
-        const pranzoEff = lunchAct?.lunchCostActual ?? ''
+        const pranzoEff = dayC.lunchCostActual    ?? ''
+        const matEff    = dayC.materialCostActual  ?? ''
 
         // Totali (effettivo se disponibile, altrimenti stima)
         const transferHoursNum = typeof transferHours === 'number' ? transferHours : 0
@@ -452,8 +453,8 @@ export function useExport() {
           : 8 * 21 + (allHours - 8) * 27
 
         const viaggioForTot = (wo.travelCostActual ?? wo.travelCostEstimate ?? 0)
-        const pranzoForTot  = (lunchAct?.lunchCostActual ?? wo.lunchCostEstimate ?? 0)
-        const matCost       = wo.materialCostEstimate ?? 0
+        const pranzoForTot  = (dayC.lunchCostActual ?? wo.lunchCostEstimate ?? 0)
+        const matCost       = dayC.materialCostActual ?? wo.materialCostEstimate ?? 0
         const totMat  = (viaggioForTot + pranzoForTot + matCost) || ''
         const totPosa = workerCost + (typeof totMat === 'number' ? totMat : 0) || ''
 
@@ -466,7 +467,7 @@ export function useExport() {
             stato, week, dataFmt, wo.orderNumber,
             transferHours, cantiere1, ore1, cantiere2, ore2,
             viaggioEst, viaggioEff, pranzoEst, pranzoEff,
-            wo.materialCostEstimate ?? '',
+            wo.materialCostEstimate ?? '', matEff,
             noteVal, totMat, totPosa,
             wo.externalTeamCost ?? '', wo.budget ?? '',
           ],

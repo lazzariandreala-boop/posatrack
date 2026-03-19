@@ -32,9 +32,8 @@ const store = useStore()
       Timer
     </button>
 
-    <!-- Sincronizza (center button, visibile solo se configurato) -->
+    <!-- Sincronizza -->
     <button
-      v-if="isConfigured()"
       class="nav-tab"
       :disabled="syncStatus === 'syncing'"
       @click="store.syncNow()"

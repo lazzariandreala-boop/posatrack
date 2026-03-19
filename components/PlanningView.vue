@@ -121,6 +121,7 @@ const formData     = ref({
   type:                 'posa' as ActivityType,
   detail:               '',
   note:                 '',
+  mapsLink:             '',
   date:                 todayStr,
   estimatedDuration:    1,
   estimatedTimeH:       0,
@@ -141,6 +142,7 @@ function resetFormData(): void {
     type:                 formData.value.type,
     detail:               '',
     note:                 '',
+    mapsLink:             '',
     date:                 selectedDate.value,
     estimatedDuration:    1,
     estimatedTimeH:       0,
@@ -161,6 +163,7 @@ function openEditForm(wo: WorkOrder): void {
     type:                 wo.type as typeof planningTypes[number],
     detail:               wo.detail,
     note:                 wo.note,
+    mapsLink:             wo.mapsLink ?? '',
     date:                 wo.date,
     estimatedDuration:    1,
     estimatedTimeH:       Math.floor(et / 60),
@@ -196,6 +199,8 @@ function saveForm(): void {
     budget:               formData.value.budget               > 0 ? formData.value.budget               : undefined,
   }
 
+  const mapsLink = formData.value.mapsLink.trim() || undefined
+
   if (editingId.value) {
     store.updateWorkOrder(editingId.value, {
       orderNumber:   formData.value.orderNumber.trim(),
@@ -204,6 +209,7 @@ function saveForm(): void {
       note:          formData.value.note.trim(),
       date:          formData.value.date,
       estimatedTime: estimatedTime || undefined,
+      mapsLink,
       ...costFields,
     })
     appState.showToast('Pianificazione aggiornata')
@@ -228,6 +234,7 @@ function saveForm(): void {
           dayIndex:          idx + 1,
           totalDays:         dur,
           createdAt:         nowTs + idx,
+          mapsLink,
           ...costFields,
         })
       })
@@ -243,6 +250,7 @@ function saveForm(): void {
         estimatedDuration: 1,
         estimatedTime:     estimatedTime || undefined,
         createdAt:         nowTs,
+        mapsLink,
         ...costFields,
       })
       appState.showToast('Lavorazione pianificata')
@@ -626,6 +634,10 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
                   </span>
                 </div>
                 <div v-if="wo.note" class="order-note">{{ wo.note }}</div>
+                <a v-if="wo.mapsLink" :href="wo.mapsLink" target="_blank" rel="noopener" class="order-maps-link">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                  Apri in Maps
+                </a>
                 <div v-if="movingOrderId === wo.id" class="move-form">
                   <input v-model="moveTargetDate" class="field-input move-date-input" type="date" />
                   <button class="btn btn-move-confirm" @click="confirmMove">Conferma</button>
@@ -693,6 +705,8 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
               <input v-model="formData.orderNumber" class="field-input" type="text" placeholder="es. ORD-2025-001" />
               <label class="field-label">Attrezzatura *</label>
               <CatalogSelect v-model="formData.detail" value-field="label" />
+              <label class="field-label">Link Maps cantiere</label>
+              <input v-model="formData.mapsLink" class="field-input" type="url" placeholder="https://maps.google.com/..." />
             </template>
 
             <!-- Campi TRASFERIMENTO -->
@@ -1165,6 +1179,19 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
   color: var(--muted);
   margin-top: 4px;
   font-style: italic;
+}
+
+.order-maps-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 5px;
+  font-size: 12px;
+  color: #4db6ac;
+  text-decoration: none;
+  font-weight: 500;
+
+  &:hover { text-decoration: underline; }
 }
 
 .order-actions {

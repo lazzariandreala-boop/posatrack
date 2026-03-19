@@ -81,13 +81,15 @@ function mergeStoreData(local: StoreData, remote: StoreData): StoreData {
     ...(local.workOrders ?? []),
   ]
 
-  const dayNotes = { ...(remote.dayNotes ?? {}), ...(local.dayNotes ?? {}) }
+  const dayNotes  = { ...(remote.dayNotes  ?? {}), ...(local.dayNotes  ?? {}) }
+  const dayCosts  = { ...(remote.dayCosts  ?? {}), ...(local.dayCosts  ?? {}) }
 
   return {
     ...remote,
     activities,
     workOrders:          workOrders.length ? workOrders : undefined,
     dayNotes:            Object.keys(dayNotes).length ? dayNotes : undefined,
+    dayCosts:            Object.keys(dayCosts).length ? dayCosts : undefined,
     deletedActivityIds:  deletedIds.size ? [...deletedIds] : undefined,
     lastModified:        Date.now(),
   }
@@ -314,6 +316,21 @@ export function useStore() {
     }
   }
 
+  // ── Costi effettivi giornalieri ─────────────────────────────────────────
+
+  /** Ritorna i costi effettivi giornalieri per una data. */
+  function getDayCosts(dateStr: string): { travelCostActual?: number; lunchCostActual?: number; materialCostActual?: number } {
+    return _load().dayCosts?.[dateStr] ?? {}
+  }
+
+  /** Salva (o aggiorna) i costi effettivi giornalieri per una data. */
+  function setDayCosts(dateStr: string, costs: { travelCostActual?: number; lunchCostActual?: number; materialCostActual?: number }): void {
+    const data = _load()
+    if (!data.dayCosts) data.dayCosts = {}
+    data.dayCosts[dateStr] = { ...(data.dayCosts[dateStr] ?? {}), ...costs }
+    _save(data)
+  }
+
   // ── Note di cantiere giornaliere ────────────────────────────────────────
 
   /** Ritorna la nota di cantiere per una data. */
@@ -467,6 +484,8 @@ export function useStore() {
     removePhoto,
     addReceiptPhoto,
     removeReceiptPhoto,
+    getDayCosts,
+    setDayCosts,
     getDayNote,
     setDayNote,
     getSitePhotos,

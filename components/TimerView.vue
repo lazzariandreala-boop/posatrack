@@ -288,48 +288,60 @@ function saveDayNote(): void {
   store.setDayNote(todayStr(), dayNote.value)
 }
 
-// ── Costi effettivi (viaggio per WO trasferimento, pranzo per pausa_pranzo) ──
+// ── Costi effettivi giornalieri ────────────────────────────────────────
+// Tutti e tre i campi sono a livello di giornata.
+// Al caricamento vengono pre-popolati con la somma delle stime dalla pianificazione;
+// se il posatore ha già salvato un valore effettivo, viene mostrato quello.
 
-const travelCostInputs = ref<Record<string, number>>({})
-const lunchCostInputs = ref<Record<string, number>>({})
+const travelCostInput   = ref(0)
+const lunchCostInput    = ref(0)
+const materialCostInput = ref(0)
 
 function initCostInputs(): void {
-  const today = todayStr()
-  const travel: Record<string, number> = {}
-  store.getWorkOrdersForDate(today)
-    .filter(wo => wo.type === 'trasferimento')
-    .forEach(wo => { travel[wo.id] = wo.travelCostActual ?? 0 })
-  travelCostInputs.value = travel
+  const today   = todayStr()
+  const wos     = store.getWorkOrdersForDate(today)
+  const dayCosts = store.getDayCosts(today)
 
-  const lunch: Record<string, number> = {}
-  store.forDate(today)
-    .filter(a => a.type === 'pausa_pranzo' && a.duration !== null)
-    .forEach(a => { lunch[a.id] = a.lunchCostActual ?? 0 })
-  lunchCostInputs.value = lunch
+  // Viaggio: effettivo salvato oppure somma delle stime dei WO trasferimento
+  if (dayCosts.travelCostActual != null) {
+    travelCostInput.value = dayCosts.travelCostActual
+  } else {
+    travelCostInput.value = wos
+      .filter(wo => wo.type === 'trasferimento')
+      .reduce((sum, wo) => sum + (wo.travelCostEstimate ?? 0), 0)
+  }
+
+  // Pranzo: effettivo salvato oppure somma delle stime dei WO
+  if (dayCosts.lunchCostActual != null) {
+    lunchCostInput.value = dayCosts.lunchCostActual
+  } else {
+    lunchCostInput.value = wos.reduce((sum, wo) => sum + (wo.lunchCostEstimate ?? 0), 0)
+  }
+
+  // Materiale: effettivo salvato oppure somma delle stime dei WO (posa e altro)
+  if (dayCosts.materialCostActual != null) {
+    materialCostInput.value = dayCosts.materialCostActual
+  } else {
+    materialCostInput.value = wos
+      .filter(wo => wo.type !== 'trasferimento')
+      .reduce((sum, wo) => sum + (wo.materialCostEstimate ?? 0), 0)
+  }
 }
 
-function saveTravelCost(woId: string): void {
-  const v = travelCostInputs.value[woId]
-  if (v === undefined) return
-  store.updateWorkOrder(woId, { travelCostActual: v > 0 ? v : undefined })
+function saveTravelCostDay(): void {
+  store.setDayCosts(todayStr(), { travelCostActual: travelCostInput.value > 0 ? travelCostInput.value : undefined })
   appState.showToast('Costo viaggio salvato')
 }
 
-function saveLunchCost(actId: string): void {
-  const v = lunchCostInputs.value[actId]
-  if (v === undefined) return
-  store.update(actId, { lunchCostActual: v > 0 ? v : undefined })
+function saveLunchCostDay(): void {
+  store.setDayCosts(todayStr(), { lunchCostActual: lunchCostInput.value > 0 ? lunchCostInput.value : undefined })
   appState.showToast('Costo pranzo salvato')
 }
 
-const transferWOs = computed(() =>
-  store.getWorkOrdersForDate(todayStr()).filter(wo => wo.type === 'trasferimento')
-)
-
-const lunchActivities = computed(() =>
-  store.forDate(todayStr()).filter(a => a.type === 'pausa_pranzo' && a.duration !== null)
-)
-
+function saveMaterialCostDay(): void {
+  store.setDayCosts(todayStr(), { materialCostActual: materialCostInput.value > 0 ? materialCostInput.value : undefined })
+  appState.showToast('Costo materiale salvato')
+}
 
 // ── Attività pianificate per oggi ─────────────────────────────────────
 
@@ -348,6 +360,15 @@ const woEstimatedTimeMap = computed(() => {
   const map = new Map<string, number>()
   store.getAllWorkOrders().forEach(wo => {
     if (wo.estimatedTime) map.set(wo.id, wo.estimatedTime)
+  })
+  return map
+})
+
+/** Mappa workOrderId → mapsLink per mostrare il link Maps in "Da fare oggi" */
+const woMapsLinkMap = computed(() => {
+  const map = new Map<string, string>()
+  store.getAllWorkOrders().forEach(wo => {
+    if (wo.mapsLink) map.set(wo.id, wo.mapsLink)
   })
   return map
 })
@@ -533,11 +554,11 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
         </div>
 
         <!-- Costi effettivi (solo se ci sono WO trasferimento o pause pranzo completate) -->
-        <div v-if="transferWOs.length || lunchActivities.length" class="costs-section">
+        <div class="costs-section">
           <div class="slabel">COSTI EFFETTIVI</div>
 
-          <!-- Viaggio: un campo per ogni WO trasferimento -->
-          <div v-for="wo in transferWOs" :key="wo.id" class="cost-row">
+          <!-- Viaggio: un campo per ogni WO trasferimento (può esserci più di una destinazione) -->
+          <!-- <div v-for="wo in transferWOs" :key="wo.id" class="cost-row">
             <div class="cost-row-label">
               Trasferimento<template v-if="wo.detail"> – {{ wo.detail }}</template>
             </div>
@@ -547,16 +568,36 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
                 class="cost-input" />
               <button class="btn btn-sm btn-primary" @click="saveTravelCost(wo.id)">Salva</button>
             </div>
+          </div> -->
+          <div class="cost-row">
+            <div class="cost-row-label">Viaggio giornata</div>
+            <div class="cost-row-fields">
+              <span class="cost-lbl">Viaggio eff. €</span>
+              <input v-model.number="travelCostInput" type="number" min="0" step="0.01" placeholder="0"
+                class="cost-input" />
+              <button class="btn btn-sm btn-primary" @click="saveTravelCostDay">Salva</button>
+            </div>
           </div>
 
-          <!-- Pranzo: un campo per ogni pausa pranzo completata -->
-          <div v-for="a in lunchActivities" :key="a.id" class="cost-row">
-            <div class="cost-row-label">Pausa pranzo · {{ fmtTime(a.startTime) }}</div>
+          <!-- Pranzo: campo unico giornaliero -->
+          <div class="cost-row">
+            <div class="cost-row-label">Pranzo giornata</div>
             <div class="cost-row-fields">
               <span class="cost-lbl">Pranzo eff. €</span>
-              <input v-model.number="lunchCostInputs[a.id]" type="number" min="0" step="0.01" placeholder="0"
+              <input v-model.number="lunchCostInput" type="number" min="0" step="0.01" placeholder="0"
                 class="cost-input" />
-              <button class="btn btn-sm btn-primary" @click="saveLunchCost(a.id)">Salva</button>
+              <button class="btn btn-sm btn-primary" @click="saveLunchCostDay">Salva</button>
+            </div>
+          </div>
+
+          <!-- Materiale: campo unico giornaliero -->
+          <div class="cost-row">
+            <div class="cost-row-label">Materiale giornata</div>
+            <div class="cost-row-fields">
+              <span class="cost-lbl">Materiale eff. €</span>
+              <input v-model.number="materialCostInput" type="number" min="0" step="0.01" placeholder="0"
+                class="cost-input" />
+              <button class="btn btn-sm btn-primary" @click="saveMaterialCostDay">Salva</button>
             </div>
           </div>
 
@@ -666,6 +707,19 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
                       </svg>
                       Rimuovi
                     </button>
+                    <a
+                      v-if="a.workOrderId && woMapsLinkMap.get(a.workOrderId)"
+                      :href="woMapsLinkMap.get(a.workOrderId)"
+                      target="_blank"
+                      rel="noopener"
+                      class="photo-btn maps-btn"
+                    >
+                      <svg viewBox="0 0 24 24">
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
+                        <circle cx="12" cy="10" r="3"/>
+                      </svg>
+                      Maps
+                    </a>
                   </div>
                 </div>
                 <div class="log-dur planned-dur">—</div>
@@ -721,7 +775,7 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
                   <!-- Azioni bottoni -->
                   <div class="log-actions">
                     <!-- Aggiungi foto -->
-                    <button v-if="a.type !== 'pausa_pranzo'" class="photo-btn" @click="triggerPhotoCapture(a.id)">
+                    <button v-if="a.type !== 'pausa_pranzo'" class="photo-btn foto-btn" @click="triggerPhotoCapture(a.id)">
                       <svg viewBox="0 0 24 24">
                         <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
                         <circle cx="12" cy="13" r="4" />
@@ -749,6 +803,21 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
                       </svg>
                       Riprendi
                     </button>
+
+                    <!-- Link Maps (se l'attività è collegata a un WO con mapsLink) -->
+                    <a
+                      v-if="a.workOrderId && woMapsLinkMap.get(a.workOrderId)"
+                      :href="woMapsLinkMap.get(a.workOrderId)"
+                      target="_blank"
+                      rel="noopener"
+                      class="photo-btn maps-btn"
+                    >
+                      <svg viewBox="0 0 24 24">
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
+                        <circle cx="12" cy="10" r="3"/>
+                      </svg>
+                      Maps
+                    </a>
 
                     <!-- Elimina -->
                     <button v-if="a.id !== current?.id" class="photo-btn delete-btn" @click="deleteActivity(a.id)">
@@ -1251,28 +1320,45 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
   }
 }
 
+.foto-btn {
+  border-color: #1e88e555;
+  color: #1e88e5;
+
+  &:hover { background: #1e88e518; border-color: #1e88e5; }
+}
+
 .receipt-btn:hover {
   border-color: var(--yellow);
   color: var(--yellow);
 }
 
-.resume-btn:hover {
+.resume-btn {
   border-color: var(--green);
   color: var(--green);
+
+  &:hover { background: rgba(76, 175, 80, .12); }
 }
 
-.delete-btn:hover {
+.delete-btn {
   border-color: var(--red);
   color: var(--red);
+
+  &:hover { background: rgba(229, 57, 53, .12); }
+}
+
+.maps-btn {
+  border-color: #4db6ac55;
+  color: #4db6ac;
+  text-decoration: none;
+
+  &:hover { background: #4db6ac18; border-color: #4db6ac; }
 }
 
 .start-btn {
-  border-color: var(--orange);
-  color: var(--orange);
-}
+  border-color: var(--green);
+  color: var(--green);
 
-.start-btn:hover {
-  background: rgba(255, 95, 0, .12);
+  &:hover { background: rgba(76, 175, 80, .12); }
 }
 
 /* Attività pianificata (sezione "Da fare oggi") */
@@ -1321,26 +1407,35 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
 }
 
 .cost-row {
+  display: flex;                      /* Allinea elementi in orizzontale */
+  justify-content: space-between;     /* Spinge le due estremità ai lati */
+  align-items: center;                /* Centra verticalmente testo e input */
   padding: 10px 0;
   border-bottom: 1px solid var(--border);
+  gap: 16px;                          /* Spazio minimo tra label e campi */
+}
 
-  &:last-child {
-    border-bottom: none;
-  }
+.cost-row:last-child {
+  border-bottom: none;
 }
 
 .cost-row-label {
-  font-size: 12px;
+  font-size: 13px;                    /* Leggermente aumentato per leggibilità orizzontale */
   font-weight: 600;
   color: var(--muted);
-  margin-bottom: 8px;
+  flex: 1;                            /* Prende tutto lo spazio vuoto, allineando i campi di destra */
+  margin-bottom: 0;                   /* Rimosso il margine inferiore precedente */
+  white-space: nowrap;                /* Evita che il testo vada a capo */
+  overflow: hidden;
+  text-overflow: ellipsis;            /* Se il testo è troppo lungo, mette i puntini */
 }
 
 .cost-row-fields {
   display: flex;
   align-items: center;
+  justify-content: flex-end;          /* Assicura l'allineamento a destra */
   gap: 10px;
-  flex-wrap: wrap;
+  flex-shrink: 0;                     /* Impedisce che input e bottone si rimpiccioliscano su schermi piccoli */
 }
 
 .cost-lbl {
@@ -1353,6 +1448,13 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
   width: 90px !important;
   padding: 8px 10px !important;
   font-size: 14px !important;
+  text-align: right;                  /* Consigliato per inserimento prezzi */
+}
+
+/* Opzionale: fissa la larghezza del bottone per renderli tutti identici */
+.cost-row-fields .btn {
+  width: 65px;
+  text-align: center;
 }
 
 @media (max-width: 799px) {

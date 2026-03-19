@@ -144,6 +144,11 @@ export interface WorkOrder {
   travelCostActual?: number
   /** Pranzo effettivo (€) */
   lunchCostActual?: number
+  /** Costo materiale effettivo (€) – inserito dal posatore a fine giornata */
+  materialCostActual?: number
+
+  /** Link Google Maps per la posizione del cantiere (solo tipo posa) */
+  mapsLink?: string
 }
 
 /** Struttura root del dato in localStorage */
@@ -157,6 +162,11 @@ export interface StoreData {
   workOrders?: WorkOrder[]
   /** Timestamp Unix ms dell'ultima scrittura – usato per conflict resolution con Gist */
   lastModified?: number
+  /**
+   * Costi effettivi giornalieri inseriti dal posatore.
+   * Chiave = YYYY-MM-DD. Separato dalle attività/WO per semplicità d'uso.
+   */
+  dayCosts?: Record<string, { travelCostActual?: number; lunchCostActual?: number; materialCostActual?: number }>
   /**
    * Tombstone: ID delle attività eliminate intenzionalmente.
    * Usato dal merge per evitare che un'attività cancellata venga re-aggiunta

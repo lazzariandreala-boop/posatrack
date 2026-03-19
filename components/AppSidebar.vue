@@ -95,9 +95,8 @@ const store = useStore()
     <!-- Impostazioni Gist ────────────────────────────────────────── -->
     <div class="sidebar-bottom">
 
-      <!-- Pulsante sync manuale: visibile solo se Gist è configurato -->
+      <!-- Pulsante sync manuale -->
       <button
-        v-if="isConfigured()"
         class="sidebar-nav-btn sidebar-sync-btn"
         :disabled="syncStatus === 'syncing'"
         @click="store.syncNow()"
