@@ -1,51 +1,59 @@
 <script setup lang="ts">
 /**
  * AppToast – Notifica temporanea in alto allo schermo
- * ─────────────────────────────────────────────────────────────────────
- * Mostra un messaggio brevemente (default 2.6s) poi sparisce.
- * Appare con un'animazione elastica dall'alto.
- * Controllato da toastMessage in useAppState:
- *   stringa non vuota → visibile
- *   stringa vuota     → nascosto
+ * Appare con animazione elastica dall'alto.
+ * Colore automatico: verde = successo (✅/completata), rosso = errore (❌/Errore/⚠️)
  */
 import { computed }    from 'vue'
 import { useAppState } from '~/composables/useAppState'
 
 const { toastMessage } = useAppState()
 
-/** Il toast è visibile quando toastMessage non è vuoto */
 const isVisible = computed(() => toastMessage.value.length > 0)
+
+const toastType = computed(() => {
+  const msg = toastMessage.value
+  if (msg.includes('❌') || msg.toLowerCase().includes('errore')) return 'error'
+  if (msg.includes('⚠️'))                                          return 'warning'
+  if (msg.includes('✅') || msg.toLowerCase().includes('completat')) return 'success'
+  return 'info'
+})
 </script>
 
 <template>
-  <div id="toast" :class="{ show: isVisible }">
+  <div id="toast" :class="['toast-' + toastType, { show: isVisible }]">
     {{ toastMessage }}
   </div>
 </template>
 
 <style scoped lang="scss">
-/* Toast – pillola flottante in cima allo schermo */
 #toast {
   position: fixed;
-  top: calc(16px + var(--safe-t));
+  top: calc(20px + var(--safe-t));
   left: 50%;
-  // Inizialmente fuori schermo verso l'alto
-  transform: translateX(-50%) translateY(-90px);
-  background: var(--surface);
-  border: 1px solid var(--border2);
-  border-radius: 30px;
-  padding: 10px 22px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
+  transform: translateX(-50%) translateY(-120px);
+  border-radius: 14px;
+  padding: 14px 28px;
+  font-size: 15px;
+  font-weight: 700;
   z-index: 400;
-  // Animazione rimbalzo con cubic-bezier elastico
-  transition: transform .30s cubic-bezier(.34, 1.56, .64, 1);
+  transition: transform .32s cubic-bezier(.34, 1.56, .64, 1);
   white-space: nowrap;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .55);
-  pointer-events: none; // non intercetta i click
+  box-shadow: 0 10px 36px rgba(0, 0, 0, .6);
+  pointer-events: none;
+  letter-spacing: .01em;
 
-  // Classe aggiunta quando il messaggio è non vuoto
   &.show { transform: translateX(-50%) translateY(0); }
+
+  &.toast-info    { background: #2a2a2a; border: 1.5px solid #444;          color: #f0f0f0; }
+  &.toast-success { background: #1b3a22; border: 1.5px solid var(--green);  color: #6fcf80; }
+  &.toast-error   { background: #3a1b1b; border: 1.5px solid var(--red);    color: #f07070; }
+  &.toast-warning { background: #3a2f1b; border: 1.5px solid var(--orange); color: #f0b860; }
+
+  @media (min-width: 800px) {
+    font-size: 17px;
+    padding: 16px 36px;
+    border-radius: 16px;
+  }
 }
 </style>

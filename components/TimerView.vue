@@ -148,7 +148,6 @@ async function stopActivity(): Promise<void> {
   appState.currentActivity.value = null
   appState.setGpsLoading(false)
   appState.showToast('Attività terminata')
-  store.syncNow()
   initCostInputs()
 }
 
@@ -436,7 +435,6 @@ onMounted(() => {
   if (created > 0) {
     appState.showToast(`📋 ${created} lavorazion${created === 1 ? 'e pianificata' : 'i pianificate'} per oggi`)
   }
-  store.syncNow()
   initCostInputs()
 })
 

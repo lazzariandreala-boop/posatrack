@@ -139,6 +139,7 @@ export function useGistSync() {
           Authorization: `token ${cfg.token}`,
           Accept: 'application/vnd.github+json',
         },
+        cache: 'no-store',
       })
       if (!res.ok) {
         const err = await res.json().catch(() => ({})) as Record<string, string>

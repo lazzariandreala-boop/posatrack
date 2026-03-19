@@ -14,7 +14,8 @@
 
 import { ref } from 'vue'
 import type { Activity, WorkOrder, StoreData } from '~/types'
-import { useGistSync } from '~/composables/useGistSync'
+import { useGistSync }  from '~/composables/useGistSync'
+import { useAppState }  from '~/composables/useAppState'
 
 /**
  * Re-inietta le foto locali nel dataset remoto.
@@ -57,8 +58,13 @@ function mergeLocalPhotos(remote: StoreData, local: StoreData): StoreData {
 
 /**
  * Unisce i dati locali con quelli remoti: l'insieme di tutte le attività/ordini
- * viene preservato; in caso di id duplicato vince il locale (ha l'attività appena
- * terminata / modificata).  Le note di cantiere vengono anch'esse unite.
+ * viene preservato con una strategia di conflict resolution intelligente:
+ *
+ *   - Attività solo in locale → tenuta
+ *   - Attività solo in remoto → aggiunta (nuovo device)
+ *   - Attività in entrambi    → vince il locale, ECCETTO se il locale ha ancora
+ *     il timer aperto (endTime === null) e il remoto l'ha già chiuso: in quel
+ *     caso vince il remoto (timer stoppato sull'altro device).
  */
 function mergeStoreData(local: StoreData, remote: StoreData): StoreData {
   // Tombstone: unione degli ID eliminati da entrambi i lati
@@ -67,13 +73,24 @@ function mergeStoreData(local: StoreData, remote: StoreData): StoreData {
     ...(remote.deletedActivityIds ?? []),
   ])
 
-  const localActIds = new Set(local.activities.map(a => a.id))
-  const activities  = [
-    // Prende dal remoto solo ciò che non è già in locale E non è stato eliminato
-    ...remote.activities.filter(a => !localActIds.has(a.id) && !deletedIds.has(a.id)),
-    // Filtra anche le locali per sicurezza (es. tombstone arrivato dal remoto)
-    ...local.activities.filter(a => !deletedIds.has(a.id)),
-  ]
+  const localActMap  = new Map(local.activities.map(a => [a.id, a]))
+  const remoteActMap = new Map(remote.activities.map(a => [a.id, a]))
+  const allActIds    = new Set([...localActMap.keys(), ...remoteActMap.keys()])
+
+  const activities: Activity[] = []
+  for (const id of allActIds) {
+    if (deletedIds.has(id)) continue
+    const l = localActMap.get(id)
+    const r = remoteActMap.get(id)
+    if (!l) {
+      activities.push(r!)                                       // solo in remoto → aggiungi
+    } else if (!r) {
+      activities.push(l)                                        // solo in locale → tieni
+    } else {
+      // Conflict: il remoto vince se ha terminato un'attività che il locale ha ancora aperta
+      activities.push(l.endTime === null && r.endTime !== null ? r : l)
+    }
+  }
 
   const localWoIds = new Set((local.workOrders ?? []).map(wo => wo.id))
   const workOrders = [
@@ -106,8 +123,8 @@ const STORE_KEY = 'pt_v3'
  */
 const _version = ref(0)
 
-/** Timer debounce per il push su Gist */
-let _pushTimer: ReturnType<typeof setTimeout> | null = null
+/** Mutex: impedisce sync concorrenti che causano 409 Conflict su GitHub */
+let _syncInProgress = false
 
 export function useStore() {
 
@@ -132,13 +149,12 @@ export function useStore() {
     }
   }
 
-  /** Serializza e salva i dati nel localStorage, poi invalida le computed e schedula il push. */
+  /** Serializza e salva i dati nel localStorage e invalida le computed. */
   function _save(data: StoreData): void {
     data.lastModified = Date.now()
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(data))
       _version.value++ // notifica Vue che i dati sono cambiati
-      _schedulePush(data)
     } catch (e) {
       // QuotaExceededError: localStorage pieno (probabile per le foto base64)
       console.error('[useStore] localStorage pieno:', e)
@@ -149,74 +165,55 @@ export function useStore() {
   /**
    * Pull → merge → push.
    * Scarica il Gist remoto, unisce i dati con quelli locali (union merge,
-   * locale vince sui conflitti) e carica il risultato sul Gist.
-   * In questo modo nessuna modifica fatta da un altro device viene persa.
+   * il remoto vince se ha terminato un'attività ancora aperta in locale)
+   * e carica il risultato sul Gist.
    */
   async function syncNow(): Promise<void> {
     if (!gistSync.isConfigured()) return
+    if (_syncInProgress) return   // evita 409 Conflict da chiamate concorrenti
 
-    const local  = _load()
-    const remote = await gistSync.pull()
-
-    if (!remote) {
-      // Pull fallito (rete o config): push comunque i dati locali
-      await gistSync.push(local)
-      return
-    }
-
-    const merged = mergeLocalPhotos(mergeStoreData(local, remote), local)
-    localStorage.setItem(STORE_KEY, JSON.stringify(merged))
-    _version.value++
-    await gistSync.push(merged)
-  }
-
-  /**
-   * Schedula una sync completa (pull+merge+push) con debounce di 2s.
-   * Annulla la precedente chiamata ancora in attesa.
-   */
-  function _schedulePush(_data: StoreData): void {
-    if (_pushTimer) clearTimeout(_pushTimer)
-    _pushTimer = setTimeout(() => syncNow(), 2000)
-  }
-
-  // ─────────────────────────────────────────────────────────────────────
-  // PUBLIC – Sync iniziale
-  // ─────────────────────────────────────────────────────────────────────
-
-  /**
-   * Da chiamare una sola volta al mount dell'app.
-   * Confronta i dati locali con il Gist remoto tramite lastModified:
-   *   - remoto più recente → sovrascrive localStorage e aggiorna la UI
-   *   - locale più recente → push dei dati locali sul Gist
-   *   - nessuna config Gist → no-op
-   */
-  async function initSync(): Promise<void> {
-    if (!gistSync.isConfigured()) return
-
-    const remote = await gistSync.pull()
-    if (!remote) return // errore di rete o config invalida
-
+    _syncInProgress = true
+    const { showToast } = useAppState()
     try {
-      const rawLocal = localStorage.getItem(STORE_KEY)
-      const local    = rawLocal ? JSON.parse(rawLocal) as StoreData : { activities: [], lastModified: 0 }
-      const remoteTs = remote.lastModified ?? 0
-      const localTs  = local.lastModified  ?? 0
+      const local  = _load()
+      const remote = await gistSync.pull()
 
-      if (remoteTs > localTs) {
-        // Il remoto è più aggiornato: aggiorna localStorage senza schedulare un push.
-        // Le foto non sono mai presenti nel Gist (vengono strippate prima del push),
-        // quindi le ri-inietta dal locale per non perderle.
-        const merged = mergeLocalPhotos(remote, local)
-        localStorage.setItem(STORE_KEY, JSON.stringify(merged))
-        _version.value++
-      } else if (localTs > remoteTs) {
-        // Il locale è più aggiornato: carica subito sul Gist
-        gistSync.push(local)
+      if (!remote) {
+        await gistSync.push(local)
+        return
       }
-      // Se uguali non serve fare nulla
-    } catch (e) {
-      console.error('[useStore] Errore durante initSync:', e)
+
+      const merged = mergeLocalPhotos(mergeStoreData(local, remote), local)
+      localStorage.setItem(STORE_KEY, JSON.stringify(merged))
+      _version.value++
+      const ok = await gistSync.push(merged)
+      if (ok) showToast('Sincronizzazione completata')
+    } finally {
+      _syncInProgress = false
     }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // PUBLIC – Sync iniziale + timer giornaliero 23:59
+  // ─────────────────────────────────────────────────────────────────────
+
+  /**
+   * Schedula la sync automatica giornaliera alle 23:59.
+   * Da chiamare una sola volta al mount dell'app.
+   */
+  function initSync(): void {
+    const scheduleNext = () => {
+      const now    = new Date()
+      const target = new Date(now)
+      target.setHours(23, 59, 0, 0)
+      if (target <= now) target.setDate(target.getDate() + 1) // già passato → domani
+      const ms = target.getTime() - now.getTime()
+      setTimeout(() => {
+        syncNow()
+        scheduleNext() // riprogramma per il giorno dopo
+      }, ms)
+    }
+    scheduleNext()
   }
 
   // ─────────────────────────────────────────────────────────────────────
