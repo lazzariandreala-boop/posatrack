@@ -13,10 +13,16 @@ export interface GpsLocation {
   acc: number   // accuratezza in metri
 }
 
-/** Foto compressa allegata a un'attività (base64 JPEG) */
+/** Foto compressa allegata a un'attività */
 export interface Photo {
-  data: string  // stringa base64 con prefisso "data:image/jpeg;base64,..."
-  ts:   number  // timestamp Unix ms al momento dello scatto
+  data: string   // base64 JPEG ("data:image/jpeg;base64,...") – vuoto se usato url
+  ts:   number   // timestamp Unix ms al momento dello scatto
+  url?: string   // Firebase Storage URL (preferito rispetto a data per la visualizzazione)
+}
+
+/** Ritorna la src migliore disponibile per visualizzare una foto */
+export function photoSrc(p: Photo): string {
+  return p.url || p.data
 }
 
 /**
@@ -175,10 +181,30 @@ export interface StoreData {
   deletedActivityIds?: string[]
 }
 
-/** Configurazione GitHub Gist per la sincronizzazione remota */
+/** Configurazione GitHub Gist per la sincronizzazione remota (mantenuto per retrocompatibilità) */
 export interface GistConfig {
-  token:  string  // Personal Access Token GitHub con scope "gist"
-  gistId: string  // ID del Gist privato
+  token:  string
+  gistId: string
+}
+
+/** Utente autenticato nell'app */
+export interface AppUser {
+  uid:         string
+  email:       string
+  displayName: string
+  photoURL:    string | null
+}
+
+/** Workspace condiviso tra più utenti */
+export interface Workspace {
+  id:             string
+  name:           string
+  ownerId:        string
+  ownerEmail:     string
+  members:        string[]   // array di uid con accesso
+  memberEmails:   string[]   // email dei membri (per display)
+  pendingInvites: string[]   // email in attesa di accettazione
+  createdAt:      number     // timestamp ms
 }
 
 /** Vista attiva nell'app (navigazione single-page) */

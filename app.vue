@@ -2,86 +2,216 @@
 /**
  * app.vue – Root component dell'applicazione
  * ─────────────────────────────────────────────────────────────────────
- * Struttura dell'app (rispecchia l'originale index.html):
+ * Gestisce tre stati principali:
+ *
+ *   1. authLoading    → spinner mentre Firebase verifica la sessione
+ *   2. !currentUser   → <AuthView> (login/registrazione)
+ *   3. currentUser + !workspaceId → <WorkspaceModal> (primo accesso)
+ *   4. currentUser + workspaceId  → app normale
+ *
+ * La struttura dell'app (stato 4):
  *
  *   #app
- *   ├── AppSidebar        (solo desktop, v-if="isDesktop")
+ *   ├── AppSidebar        (solo desktop)
  *   ├── #views-wrap
- *   │   ├── TimerView     (sempre presente, v-show="...")
- *   │   ├── SummaryView   (solo desktop, v-show="...")
- *   │   └── DashboardView (solo desktop, v-show="...")
- *   ├── AppBottomNav      (solo mobile, v-if="!isDesktop")
- *   │
- *   │   — Overlay globali (sempre nel DOM) —
- *   ├── ActivityModal
- *   ├── AppGpsLoader
- *   ├── AppLightbox
- *   └── AppToast
- *
- * La navigazione tra viste è gestita tramite v-show per mantenere
- * lo stato DOM (Leaflet, Chart.js) tra i cambi di vista senza
- * dover reinizializzare ogni volta.
+ *   │   ├── TimerView
+ *   │   ├── SummaryView   (solo desktop)
+ *   │   └── DashboardView (solo desktop)
+ *   ├── AppBottomNav      (solo mobile)
+ *   └── Overlay globali   (ActivityModal, AppGpsLoader, AppLightbox, AppToast, WorkspaceModal)
  */
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import { useAppState } from '~/composables/useAppState'
 import { useStore }    from '~/composables/useStore'
+import { useAuth }     from '~/composables/useAuth'
+import {
+  fetchWorkspace,
+  checkAndJoinPendingWorkspace,
+} from '~/services/firestore'
 
-const { currentView, isDesktop, updateLayout } = useAppState()
-const store = useStore()
+const appState = useAppState()
+const store    = useStore()
+const auth     = useAuth()
+
+const {
+  currentView,
+  isDesktop,
+  updateLayout,
+  activeWorkspaceId,
+} = appState
+
+// ── Avvio ─────────────────────────────────────────────────────────────
 
 onMounted(() => {
-  // Imposta il layout iniziale e aggiorna al resize
+  // Inizializza listener auth Firebase
+  auth.init()
+
+  // Layout responsivo
   updateLayout()
   window.addEventListener('resize', updateLayout)
-
-  // Sincronizzazione iniziale con GitHub Gist (no-op se non configurato)
-  store.initSync()
 })
 
 onUnmounted(() => {
   window.removeEventListener('resize', updateLayout)
 })
+
+// ── Reazione al login/logout ──────────────────────────────────────────
+
+watch(
+  () => auth.currentUser.value,
+  async (user) => {
+    if (!user) {
+      // Logout: pulisce workspace e store
+      store.clearWorkspace()
+      appState.clearActiveWorkspace()
+      return
+    }
+
+    // Login: controlla se l'utente ha già un workspace
+    const savedWid = activeWorkspaceId.value
+    if (savedWid) {
+      // Verifica che il workspace esista ancora e l'utente sia membro
+      const ws = await fetchWorkspace(savedWid)
+      if (ws && ws.members.includes(user.uid)) {
+        appState.setActiveWorkspace(savedWid, ws.name)
+        await store.initWorkspace(savedWid)
+        return
+      }
+      // Workspace non più valido: pulisce
+      appState.clearActiveWorkspace()
+    }
+
+    // Controlla inviti pendenti
+    const pendingWid = await checkAndJoinPendingWorkspace(user.uid, user.email)
+    if (pendingWid) {
+      const ws = await fetchWorkspace(pendingWid)
+      if (ws) {
+        appState.setActiveWorkspace(pendingWid, ws.name)
+        await store.initWorkspace(pendingWid)
+      }
+    }
+    // Se ancora nessun workspace → WorkspaceModal si apre automaticamente
+  },
+)
+
+// ── Reazione alla selezione workspace (dal WorkspaceModal) ────────────
+
+watch(
+  () => activeWorkspaceId.value,
+  async (wid) => {
+    if (!wid || !auth.currentUser.value) return
+    if (store.syncStatus.value === 'ok') return  // già inizializzato
+    await store.initWorkspace(wid)
+  },
+)
 </script>
 
 <template>
-  <div id="app">
 
-    <!-- Sidebar: visibile solo su desktop ─────────────────────── -->
+  <!-- ── 1. Caricamento auth ──────────────────────────────────────────── -->
+  <div v-if="auth.authLoading.value" class="auth-loading">
+    <div class="auth-loading-spinner" />
+    <div class="auth-loading-text">PosaTrack</div>
+  </div>
+
+  <!-- ── 2. Non autenticato → schermata login ──────────────────────────── -->
+  <AuthView v-else-if="!auth.currentUser.value" />
+
+  <!-- ── 3. Autenticato ma senza workspace → selezione obbligatoria ─────── -->
+  <div v-else-if="!activeWorkspaceId" class="workspace-gate">
+    <div class="workspace-gate-header">
+      <div class="workspace-gate-brand">🏗 PosaTrack</div>
+      <div class="workspace-gate-sub">Accedi a un workspace per continuare</div>
+    </div>
+    <WorkspaceModal :force-open="true" @workspace-ready="(id) => activeWorkspaceId" />
+  </div>
+
+  <!-- ── 4. App normale ────────────────────────────────────────────────── -->
+  <div v-else id="app">
+
+    <!-- Sidebar: visibile solo su desktop -->
     <AppSidebar v-if="isDesktop" />
 
-    <!-- Area viste scrollabile ────────────────────────────────── -->
+    <!-- Area viste scrollabile -->
     <div id="views-wrap">
-      <!--
-        v-show invece di v-if: il DOM rimane montato per tutte le viste
-        così Leaflet e Chart.js non vengono distrutti al cambio di vista.
-      -->
       <TimerView     v-show="currentView === 'timer'" />
       <SummaryView   v-show="currentView === 'summary'" />
       <DashboardView v-show="currentView === 'dashboard'" />
       <PlanningView  v-show="currentView === 'planning'" />
     </div>
 
-    <!-- Bottom nav: visibile solo su mobile ────────────────────── -->
+    <!-- Bottom nav: visibile solo su mobile -->
     <AppBottomNav v-if="!isDesktop" />
 
-    <!-- ─── Overlay globali ──────────────────────────────────────
-         Sempre nel DOM (indipendenti dalla vista attiva)
-         ────────────────────────────────────────────────────────── -->
-
-    <!-- Modal bottom sheet per l'inserimento di una nuova attività -->
+    <!-- ─── Overlay globali ──────────────────────────────────────────── -->
     <ActivityModal />
-
-    <!-- Overlay spinner durante l'acquisizione GPS -->
     <AppGpsLoader />
-
-    <!-- Lightbox foto a schermo intero -->
     <AppLightbox />
-
-    <!-- Toast notification temporanea in cima -->
     <AppToast />
-
-    <!-- Modal impostazioni GitHub Gist -->
     <GistSettingsModal />
+    <WorkspaceModal />
 
   </div>
+
 </template>
+
+<style>
+/* Schermata di caricamento auth */
+.auth-loading {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  gap: 16px;
+}
+
+.auth-loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(255, 95, 0, .2);
+  border-top-color: var(--orange);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+
+.auth-loading-text {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 28px;
+  font-weight: 900;
+  color: var(--orange);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* Gate workspace */
+.workspace-gate {
+  min-height: 100vh;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 60px;
+}
+
+.workspace-gate-header {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.workspace-gate-brand {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 40px;
+  font-weight: 900;
+  color: var(--orange);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.workspace-gate-sub {
+  font-size: 13px;
+  color: var(--muted);
+  margin-top: 6px;
+}
+</style>

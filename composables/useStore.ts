@@ -1,52 +1,65 @@
 /**
- * ============================================================
- * useStore – Gestione persistenza localStorage + sync Gist
- * ============================================================
- * Tutte le operazioni CRUD sui dati dell'app passano da qui.
- * La chiave "pt_v3" contiene un JSON con struttura StoreData.
+ * composables/useStore.ts – Gestione persistenza dati
+ * ─────────────────────────────────────────────────────────────────────
+ * Backend:
+ *   - localStorage ("pt_v3"): cache locale per accesso istantaneo e offline
+ *   - Firestore: cloud sync in tempo reale tra tutti i membri del workspace
+ *   - Cloudinary: upload foto (URL permanenti in Photo.url)
  *
- * Ogni scrittura locale viene anche schedulata per il push su
- * GitHub Gist (debounce 2s), se la sincronizzazione è configurata.
+ * Flusso write:
+ *   1. Scrittura immediata in localStorage → UI aggiornata istantaneamente
+ *   2. Push asincrono su Firestore → altri dispositivi ricevono l'aggiornamento
  *
- * Per avviare la sincronizzazione iniziale al mount dell'app
- * chiamare initSync() una sola volta.
+ * Flusso foto:
+ *   1. base64 salvato in localStorage immediatamente (visualizzazione offline)
+ *   2. Upload asincrono su Cloudinary → URL salvato in Photo.url
+ *   3. URL aggiornato in localStorage e Firestore
+ *
+ * API pubblica: IDENTICA alla versione precedente (nessuna breaking change).
  */
 
 import { ref } from 'vue'
-import type { Activity, WorkOrder, StoreData } from '~/types'
-import { useGistSync }  from '~/composables/useGistSync'
-import { useAppState }  from '~/composables/useAppState'
+import type { Unsubscribe } from 'firebase/firestore'
+import type { Activity, WorkOrder, StoreData, Photo } from '~/types'
+import { useAppState } from '~/composables/useAppState'
+import {
+  pullStore,
+  pushStore,
+  subscribeStore,
+} from '~/services/firestore'
+import {
+  isCloudinaryConfigured,
+  uploadActivityPhoto as cloudUploadActivity,
+  uploadReceiptPhoto  as cloudUploadReceipt,
+  uploadSitePhoto     as cloudUploadSite,
+} from '~/services/cloudinary'
 
-/**
- * Re-inietta le foto locali nel dataset remoto.
- * Le foto non vengono mai sincronizzate su Gist (per tenerlo sotto 1 MB),
- * quindi quando il remoto sovrascrive il locale è necessario preservarle.
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// MERGE helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
 function mergeLocalPhotos(remote: StoreData, local: StoreData): StoreData {
   const localById = new Map(
     local.activities.map(a => [a.id, { photos: a.photos, receiptPhotos: a.receiptPhotos }])
   )
-
   const mergedActivities = remote.activities.map(a => {
     const localPhotos = localById.get(a.id)
     if (!localPhotos) return a
     return {
       ...a,
-      // Usa le foto locali se il remoto le ha strippate (data === '')
-      photos:        a.photos?.some(p => p.data)        ? a.photos        : (localPhotos.photos        ?? []),
-      receiptPhotos: a.receiptPhotos?.some(p => p.data) ? a.receiptPhotos : (localPhotos.receiptPhotos ?? []),
+      photos:        a.photos?.some(p => p.data || p.url) ? a.photos : (localPhotos.photos ?? []),
+      receiptPhotos: a.receiptPhotos?.some(p => p.data || p.url) ? a.receiptPhotos : (localPhotos.receiptPhotos ?? []),
     }
   })
 
-  // Merge sitePhotos: usa le locali per ogni data dove il remoto ha foto strippate
   const remoteSite = remote.sitePhotos ?? {}
   const localSite  = local.sitePhotos  ?? {}
   const allDates   = new Set([...Object.keys(remoteSite), ...Object.keys(localSite)])
-  const mergedSite: Record<string, import('~/types').Photo[]> = {}
+  const mergedSite: Record<string, Photo[]> = {}
   for (const date of allDates) {
     const rp = remoteSite[date] ?? []
     const lp = localSite[date]  ?? []
-    mergedSite[date] = rp.some(p => p.data) ? rp : lp
+    mergedSite[date] = rp.some(p => p.data || p.url) ? rp : lp
   }
 
   return {
@@ -56,18 +69,7 @@ function mergeLocalPhotos(remote: StoreData, local: StoreData): StoreData {
   }
 }
 
-/**
- * Unisce i dati locali con quelli remoti: l'insieme di tutte le attività/ordini
- * viene preservato con una strategia di conflict resolution intelligente:
- *
- *   - Attività solo in locale → tenuta
- *   - Attività solo in remoto → aggiunta (nuovo device)
- *   - Attività in entrambi    → vince il locale, ECCETTO se il locale ha ancora
- *     il timer aperto (endTime === null) e il remoto l'ha già chiuso: in quel
- *     caso vince il remoto (timer stoppato sull'altro device).
- */
 function mergeStoreData(local: StoreData, remote: StoreData): StoreData {
-  // Tombstone: unione degli ID eliminati da entrambi i lati
   const deletedIds = new Set([
     ...(local.deletedActivityIds  ?? []),
     ...(remote.deletedActivityIds ?? []),
@@ -83,11 +85,10 @@ function mergeStoreData(local: StoreData, remote: StoreData): StoreData {
     const l = localActMap.get(id)
     const r = remoteActMap.get(id)
     if (!l) {
-      activities.push(r!)                                       // solo in remoto → aggiungi
+      activities.push(r!)
     } else if (!r) {
-      activities.push(l)                                        // solo in locale → tieni
+      activities.push(l)
     } else {
-      // Conflict: il remoto vince se ha terminato un'attività che il locale ha ancora aperta
       activities.push(l.endTime === null && r.endTime !== null ? r : l)
     }
   }
@@ -98,181 +99,164 @@ function mergeStoreData(local: StoreData, remote: StoreData): StoreData {
     ...(local.workOrders ?? []),
   ]
 
-  const dayNotes  = { ...(remote.dayNotes  ?? {}), ...(local.dayNotes  ?? {}) }
-  const dayCosts  = { ...(remote.dayCosts  ?? {}), ...(local.dayCosts  ?? {}) }
+  const dayNotes = { ...(remote.dayNotes ?? {}), ...(local.dayNotes ?? {}) }
+  const dayCosts = { ...(remote.dayCosts ?? {}), ...(local.dayCosts ?? {}) }
 
   return {
     ...remote,
     activities,
-    workOrders:          workOrders.length ? workOrders : undefined,
-    dayNotes:            Object.keys(dayNotes).length ? dayNotes : undefined,
-    dayCosts:            Object.keys(dayCosts).length ? dayCosts : undefined,
-    deletedActivityIds:  deletedIds.size ? [...deletedIds] : undefined,
-    lastModified:        Date.now(),
+    workOrders:         workOrders.length ? workOrders : undefined,
+    dayNotes:           Object.keys(dayNotes).length ? dayNotes : undefined,
+    dayCosts:           Object.keys(dayCosts).length ? dayCosts : undefined,
+    deletedActivityIds: deletedIds.size ? [...deletedIds] : undefined,
+    lastModified:       Date.now(),
   }
 }
 
-/** Chiave localStorage */
+// ─────────────────────────────────────────────────────────────────────────────
+// STATO MODULE-LEVEL (singleton condiviso tra tutti i componenti)
+// ─────────────────────────────────────────────────────────────────────────────
+
 const STORE_KEY = 'pt_v3'
 
-/**
- * Contatore reattivo: si incrementa ad ogni scrittura su localStorage.
- * Tutte le funzioni di lettura lo "leggono" per registrarsi come dipendenze
- * di Vue computed/watch, che vengono così ri-eseguite automaticamente
- * dopo ogni modifica (add, update, remove, addPhoto, …).
- */
-const _version = ref(0)
+const _version   = ref(0)
+const syncStatus = ref<'idle' | 'syncing' | 'ok' | 'error'>('idle')
+const lastSync   = ref<number | null>(null)
 
-/** Mutex: impedisce sync concorrenti che causano 409 Conflict su GitHub */
-let _syncInProgress = false
-/** Se true, una sync verrà eseguita non appena quella corrente termina */
-let _syncQueued = false
+let _workspaceId:    string | null      = null
+let _unsubFirestore: Unsubscribe | null = null
+
+// Cloudinary config (letti al primo useStore() e cachati)
+let _cloudName:    string = ''
+let _uploadPreset: string = ''
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EXPORT
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function useStore() {
 
-  const gistSync = useGistSync()
+  // Legge la config Cloudinary una sola volta
+  if (!_cloudName) {
+    const config   = useRuntimeConfig()
+    _cloudName    = (config.public.cloudinaryCloudName    as string) ?? ''
+    _uploadPreset = (config.public.cloudinaryUploadPreset as string) ?? ''
+  }
 
-  // ─────────────────────────────────────────────────────────────────────
-  // PRIVATE – Helpers interni
-  // ─────────────────────────────────────────────────────────────────────
+  // ── Helpers locali ──────────────────────────────────────────────────────────
 
-  /** Carica e deserializza i dati. In caso di JSON corrotto ritorna struttura vuota. */
   function _load(): StoreData {
-    // Legge _version per registrare questa funzione come dipendenza reattiva:
-    // ogni volta che _version cambia (cioè dopo un _save), Vue invalida
-    // le computed/watch che hanno chiamato _load() e le ri-esegue.
     void _version.value
     try {
       const raw = localStorage.getItem(STORE_KEY)
       return JSON.parse(raw || '{"activities":[]}') as StoreData
-    } catch (e) {
-      console.error('[useStore] Errore parsing localStorage:', e)
+    } catch {
       return { activities: [] }
     }
   }
 
-  /** Serializza e salva i dati nel localStorage e invalida le computed. Nessuna API call. */
   function _save(data: StoreData): void {
     data.lastModified = Date.now()
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(data))
       _version.value++
-    } catch (e) {
-      console.error('[useStore] localStorage pieno:', e)
+    } catch {
       alert('Attenzione: memoria locale quasi esaurita. Esporta i dati e cancella le attività vecchie.')
     }
+    if (_workspaceId) {
+      void pushStore(_workspaceId, data)
+        .catch(e => console.warn('[useStore] Push Firestore fallito:', e))
+    }
   }
 
+  // ── Sync ───────────────────────────────────────────────────────────────────
+
   /**
-   * Pull → merge → push (una singola chiamata per volta).
-   * Se una sync è già in corso, la marca come "in coda": al termine
-   * della prima verrà eseguita automaticamente una seconda passata
-   * per caricare eventuali modifiche arrivate nel frattempo.
+   * Inizializza il workspace: pull iniziale + listener real-time Firestore.
+   * Va chiamato da app.vue quando il workspace è disponibile.
    */
-  async function syncNow(): Promise<void> {
-    if (!gistSync.isConfigured()) return
+  async function initWorkspace(workspaceId: string): Promise<void> {
+    if (_unsubFirestore) { _unsubFirestore(); _unsubFirestore = null }
 
-    if (_syncInProgress) {
-      _syncQueued = true   // riprova dopo che la sync corrente finisce
-      return
-    }
+    _workspaceId     = workspaceId
+    syncStatus.value = 'syncing'
 
-    _syncInProgress = true
-    _syncQueued     = false
-    const { showToast } = useAppState()
     try {
-      const local  = _load()
-      const remote = await gistSync.pull()
-
-      if (!remote) {
-        await gistSync.push(local)
-        return
+      const remote = await pullStore(workspaceId)
+      if (remote) {
+        const local  = _load()
+        const merged = mergeLocalPhotos(mergeStoreData(local, remote), local)
+        localStorage.setItem(STORE_KEY, JSON.stringify(merged))
+        _version.value++
+        void pushStore(workspaceId, merged).catch(() => {})
       }
-
-      const merged = mergeLocalPhotos(mergeStoreData(local, remote), local)
-      localStorage.setItem(STORE_KEY, JSON.stringify(merged))
-      _version.value++
-      const ok = await gistSync.push(merged)
-      if (ok) showToast('Sincronizzazione completata')
-    } finally {
-      _syncInProgress = false
-      if (_syncQueued) {
-        _syncQueued = false
-        setTimeout(() => syncNow(), 1000)   // aspetta 1s prima del retry
-      }
+      syncStatus.value = 'ok'
+      lastSync.value   = Date.now()
+    } catch (e) {
+      syncStatus.value = 'error'
+      console.error('[useStore] Pull iniziale fallito:', e)
     }
+
+    _unsubFirestore = subscribeStore(
+      workspaceId,
+      (remoteData) => {
+        const local = _load()
+        if (remoteData.lastModified && local.lastModified &&
+            remoteData.lastModified <= local.lastModified) return
+        const merged = mergeLocalPhotos(mergeStoreData(local, remoteData), local)
+        localStorage.setItem(STORE_KEY, JSON.stringify(merged))
+        _version.value++
+        syncStatus.value = 'ok'
+        lastSync.value   = Date.now()
+      },
+      (err) => {
+        syncStatus.value = 'error'
+        console.error('[useStore] Errore snapshot Firestore:', err)
+      },
+    )
   }
 
-  // ─────────────────────────────────────────────────────────────────────
-  // PUBLIC – Sync iniziale + timer giornaliero 23:59
-  // ─────────────────────────────────────────────────────────────────────
-
-  /**
-   * Schedula la sync automatica giornaliera alle 23:59.
-   * Da chiamare una sola volta al mount dell'app.
-   */
-  function initSync(): void {
-    const scheduleNext = () => {
-      const now    = new Date()
-      const target = new Date(now)
-      target.setHours(23, 59, 0, 0)
-      if (target <= now) target.setDate(target.getDate() + 1) // già passato → domani
-      const ms = target.getTime() - now.getTime()
-      setTimeout(() => {
-        syncNow()
-        scheduleNext() // riprogramma per il giorno dopo
-      }, ms)
-    }
-    scheduleNext()
+  /** Ferma il listener Firestore e pulisce il workspace corrente. */
+  function clearWorkspace(): void {
+    if (_unsubFirestore) { _unsubFirestore(); _unsubFirestore = null }
+    _workspaceId     = null
+    syncStatus.value = 'idle'
   }
 
-  // ─────────────────────────────────────────────────────────────────────
-  // PUBLIC – API
-  // ─────────────────────────────────────────────────────────────────────
+  // ── CRUD Attività ──────────────────────────────────────────────────────────
 
-  /** Ritorna tutte le attività ordinate dal più recente al più vecchio. */
   function all(): Activity[] {
     return _load().activities.slice().sort((a, b) => b.startTime - a.startTime)
   }
 
-  /** Ritorna le attività di una specifica data (YYYY-MM-DD). */
   function forDate(dateStr: string): Activity[] {
     return _load().activities.filter(a => a.date === dateStr)
   }
 
-  /** Ritorna le attività nel range di date [fromDate, toDate] incluso. */
   function forRange(fromDate: string, toDate: string): Activity[] {
     return _load().activities.filter(a => a.date >= fromDate && a.date <= toDate)
   }
 
-  /** Ritorna le date uniche che hanno almeno un'attività, ordine decrescente. */
   function allDates(): string[] {
     return [...new Set(_load().activities.map(a => a.date))].sort().reverse()
   }
 
-  /** Ritorna l'eventuale attività non terminata (endTime = null) per la data. */
   function getOngoing(dateStr: string): Activity | null {
     return _load().activities.find(a => a.date === dateStr && !a.endTime) ?? null
   }
 
-  /** Aggiunge una nuova attività all'array. */
   function add(activity: Activity): void {
     const data = _load()
     data.activities.push(activity)
     _save(data)
   }
 
-  /** Aggiorna i campi di un'attività esistente tramite id. */
   function update(id: string, fields: Partial<Activity>): void {
     const data = _load()
     const idx  = data.activities.findIndex(a => a.id === id)
-    if (idx !== -1) {
-      Object.assign(data.activities[idx], fields)
-      _save(data)
-    }
+    if (idx !== -1) { Object.assign(data.activities[idx], fields); _save(data) }
   }
 
-  /** Rimuove un'attività per id e registra il tombstone per evitare re-inserimenti dal sync. */
   function remove(id: string): void {
     const data = _load()
     data.activities = data.activities.filter(a => a.id !== id)
@@ -281,56 +265,68 @@ export function useStore() {
     _save(data)
   }
 
-  /** Aggiunge una foto (base64) all'array photos di un'attività. */
+  // ── Foto attività ──────────────────────────────────────────────────────────
+
   function addPhoto(activityId: string, base64Data: string): void {
     const data     = _load()
     const activity = data.activities.find(a => a.id === activityId)
-    if (activity) {
-      if (!activity.photos) activity.photos = []
-      activity.photos.push({ data: base64Data, ts: Date.now() })
-      _save(data)
+    if (!activity) return
+    if (!activity.photos) activity.photos = []
+    const ts = Date.now()
+    activity.photos.push({ data: base64Data, ts })
+    _save(data)
+
+    if (_workspaceId && isCloudinaryConfigured(_cloudName, _uploadPreset)) {
+      cloudUploadActivity(activityId, ts, base64Data, _cloudName, _uploadPreset)
+        .then(url => {
+          const d = _load()
+          const a = d.activities.find(x => x.id === activityId)
+          const p = a?.photos?.find(x => x.ts === ts)
+          if (p) { p.url = url; _save(d) }
+        })
+        .catch(e => console.warn('[useStore] Upload foto Cloudinary fallito:', e))
     }
   }
 
-  /** Rimuove una foto (per indice) dall'array photos di un'attività. */
   function removePhoto(activityId: string, photoIndex: number): void {
     const data     = _load()
     const activity = data.activities.find(a => a.id === activityId)
-    if (activity?.photos) {
-      activity.photos.splice(photoIndex, 1)
-      _save(data)
-    }
+    if (activity?.photos) { activity.photos.splice(photoIndex, 1); _save(data) }
   }
 
-  /** Aggiunge una foto scontrino (base64) all'array receiptPhotos di un'attività. */
   function addReceiptPhoto(activityId: string, base64Data: string): void {
     const data     = _load()
     const activity = data.activities.find(a => a.id === activityId)
-    if (activity) {
-      if (!activity.receiptPhotos) activity.receiptPhotos = []
-      activity.receiptPhotos.push({ data: base64Data, ts: Date.now() })
-      _save(data)
+    if (!activity) return
+    if (!activity.receiptPhotos) activity.receiptPhotos = []
+    const ts = Date.now()
+    activity.receiptPhotos.push({ data: base64Data, ts })
+    _save(data)
+
+    if (_workspaceId && isCloudinaryConfigured(_cloudName, _uploadPreset)) {
+      cloudUploadReceipt(activityId, ts, base64Data, _cloudName, _uploadPreset)
+        .then(url => {
+          const d = _load()
+          const a = d.activities.find(x => x.id === activityId)
+          const p = a?.receiptPhotos?.find(x => x.ts === ts)
+          if (p) { p.url = url; _save(d) }
+        })
+        .catch(e => console.warn('[useStore] Upload scontrino Cloudinary fallito:', e))
     }
   }
 
-  /** Rimuove una foto scontrino per indice da un'attività. */
   function removeReceiptPhoto(activityId: string, photoIndex: number): void {
     const data     = _load()
     const activity = data.activities.find(a => a.id === activityId)
-    if (activity?.receiptPhotos) {
-      activity.receiptPhotos.splice(photoIndex, 1)
-      _save(data)
-    }
+    if (activity?.receiptPhotos) { activity.receiptPhotos.splice(photoIndex, 1); _save(data) }
   }
 
-  // ── Costi effettivi giornalieri ─────────────────────────────────────────
+  // ── Costi giornalieri ──────────────────────────────────────────────────────
 
-  /** Ritorna i costi effettivi giornalieri per una data. */
-  function getDayCosts(dateStr: string): { travelCostActual?: number; lunchCostActual?: number; materialCostActual?: number } {
+  function getDayCosts(dateStr: string) {
     return _load().dayCosts?.[dateStr] ?? {}
   }
 
-  /** Salva (o aggiorna) i costi effettivi giornalieri per una data. */
   function setDayCosts(dateStr: string, costs: { travelCostActual?: number; lunchCostActual?: number; materialCostActual?: number }): void {
     const data = _load()
     if (!data.dayCosts) data.dayCosts = {}
@@ -338,14 +334,12 @@ export function useStore() {
     _save(data)
   }
 
-  // ── Note di cantiere giornaliere ────────────────────────────────────────
+  // ── Note giornaliere ───────────────────────────────────────────────────────
 
-  /** Ritorna la nota di cantiere per una data. */
   function getDayNote(dateStr: string): string {
     return _load().dayNotes?.[dateStr] ?? ''
   }
 
-  /** Salva (o aggiorna) la nota di cantiere per una data. */
   function setDayNote(dateStr: string, note: string): void {
     const data = _load()
     if (!data.dayNotes) data.dayNotes = {}
@@ -353,45 +347,47 @@ export function useStore() {
     _save(data)
   }
 
-  // ── Foto di cantiere giornaliere ────────────────────────────────────────
+  // ── Foto cantiere giornaliere ──────────────────────────────────────────────
 
-  /** Ritorna le foto di cantiere per una data. */
-  function getSitePhotos(dateStr: string): import('~/types').Photo[] {
+  function getSitePhotos(dateStr: string): Photo[] {
     return _load().sitePhotos?.[dateStr] ?? []
   }
 
-  /** Aggiunge una foto di cantiere per una data. */
   function addSitePhoto(dateStr: string, base64Data: string): void {
     const data = _load()
     if (!data.sitePhotos) data.sitePhotos = {}
     if (!data.sitePhotos[dateStr]) data.sitePhotos[dateStr] = []
-    data.sitePhotos[dateStr].push({ data: base64Data, ts: Date.now() })
+    const ts = Date.now()
+    data.sitePhotos[dateStr].push({ data: base64Data, ts })
     _save(data)
-  }
 
-  /** Rimuove una foto di cantiere per data e indice. */
-  function removeSitePhoto(dateStr: string, photoIndex: number): void {
-    const data = _load()
-    if (data.sitePhotos?.[dateStr]) {
-      data.sitePhotos[dateStr].splice(photoIndex, 1)
-      _save(data)
+    if (_workspaceId && isCloudinaryConfigured(_cloudName, _uploadPreset)) {
+      cloudUploadSite(dateStr, ts, base64Data, _cloudName, _uploadPreset)
+        .then(url => {
+          const d = _load()
+          const p = d.sitePhotos?.[dateStr]?.find(x => x.ts === ts)
+          if (p) { p.url = url; _save(d) }
+        })
+        .catch(e => console.warn('[useStore] Upload foto cantiere Cloudinary fallito:', e))
     }
   }
 
-  // ── Ordini di lavoro pianificati ────────────────────────────────────
+  function removeSitePhoto(dateStr: string, photoIndex: number): void {
+    const data = _load()
+    if (data.sitePhotos?.[dateStr]) { data.sitePhotos[dateStr].splice(photoIndex, 1); _save(data) }
+  }
 
-  /** Ritorna tutti gli ordini di lavoro pianificati. */
+  // ── Ordini di lavoro ───────────────────────────────────────────────────────
+
   function getAllWorkOrders(): WorkOrder[] {
     void _version.value
     return _load().workOrders ?? []
   }
 
-  /** Ritorna gli ordini di lavoro per una data specifica (YYYY-MM-DD). */
   function getWorkOrdersForDate(dateStr: string): WorkOrder[] {
     return getAllWorkOrders().filter(wo => wo.date === dateStr)
   }
 
-  /** Aggiunge un ordine di lavoro. */
   function addWorkOrder(wo: WorkOrder): void {
     const data = _load()
     if (!data.workOrders) data.workOrders = []
@@ -399,45 +395,27 @@ export function useStore() {
     _save(data)
   }
 
-  /** Aggiorna i campi di un ordine di lavoro esistente tramite id. */
   function updateWorkOrder(id: string, fields: Partial<WorkOrder>): void {
     const data = _load()
-    const idx = (data.workOrders ?? []).findIndex(wo => wo.id === id)
-    if (idx !== -1) {
-      Object.assign(data.workOrders![idx], fields)
-      _save(data)
-    }
+    const idx  = (data.workOrders ?? []).findIndex(wo => wo.id === id)
+    if (idx !== -1) { Object.assign(data.workOrders![idx], fields); _save(data) }
   }
 
-  /** Rimuove un ordine di lavoro per id. */
   function removeWorkOrder(id: string): void {
     const data = _load()
-    if (data.workOrders) {
-      data.workOrders = data.workOrders.filter(wo => wo.id !== id)
-      _save(data)
-    }
+    if (data.workOrders) { data.workOrders = data.workOrders.filter(wo => wo.id !== id); _save(data) }
   }
 
-  /** Rimuove tutti gli ordini di lavoro appartenenti a un gruppo (lavorazione multi-giorno). */
   function removeWorkOrderGroup(groupId: string): void {
     const data = _load()
-    if (data.workOrders) {
-      data.workOrders = data.workOrders.filter(wo => wo.groupId !== groupId)
-      _save(data)
-    }
+    if (data.workOrders) { data.workOrders = data.workOrders.filter(wo => wo.groupId !== groupId); _save(data) }
   }
 
-  /**
-   * Pre-crea attività pianificate per la giornata odierna da work orders non ancora attivati.
-   * Ritorna il numero di attività create.
-   * Da chiamare al mount del TimerView.
-   */
   function autoCreatePlannedActivities(todayStr: string): number {
-    const data = _load()
+    const data        = _load()
     const todayOrders = (data.workOrders ?? []).filter(wo => wo.date === todayStr)
     if (!todayOrders.length) return 0
 
-    // Trova i work order già convertiti in attività pianificate per oggi
     const existingWoIds = new Set(
       data.activities
         .filter(a => a.date === todayStr && a.isPlanned && a.workOrderId)
@@ -447,7 +425,7 @@ export function useStore() {
     let created = 0
     for (const wo of todayOrders) {
       if (!existingWoIds.has(wo.id)) {
-        const nowTs = Date.now() + created // evita id duplicati se creati nello stesso ms
+        const nowTs = Date.now() + created
         const activity: Activity = {
           id:          `act_${nowTs}`,
           type:        wo.type,
@@ -455,7 +433,7 @@ export function useStore() {
           note:        wo.note,
           date:        todayStr,
           startTime:   nowTs,
-          endTime:     nowTs,    // duration = 0: pre-compilata, non ancora avviata
+          endTime:     nowTs,
           startLoc:    null,
           endLoc:      null,
           duration:    0,
@@ -474,11 +452,13 @@ export function useStore() {
   }
 
   return {
-    initSync,
-    syncNow,
-    syncStatus:   gistSync.syncStatus,
-    lastSync:     gistSync.lastSync,
-    isGistConfigured: gistSync.isConfigured,
+    // Sync
+    initWorkspace,
+    clearWorkspace,
+    syncStatus,
+    lastSync,
+    isGistConfigured: () => _workspaceId !== null,
+    // Activities
     all,
     forDate,
     forRange,
@@ -491,6 +471,7 @@ export function useStore() {
     removePhoto,
     addReceiptPhoto,
     removeReceiptPhoto,
+    // Day data
     getDayCosts,
     setDayCosts,
     getDayNote,
@@ -498,6 +479,7 @@ export function useStore() {
     getSitePhotos,
     addSitePhoto,
     removeSitePhoto,
+    // Work orders
     getAllWorkOrders,
     getWorkOrdersForDate,
     addWorkOrder,

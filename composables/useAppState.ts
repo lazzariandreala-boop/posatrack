@@ -69,10 +69,21 @@ const isLightboxOpen = ref(false)
 /** src base64 dell'immagine mostrata nel lightbox */
 const lightboxSrc = ref('')
 
-// ── Gist Settings ─────────────────────────────────────────────────────────────
-
-/** true quando il modal delle impostazioni Gist è aperto */
+// ── Gist Settings (mantenuto per retrocompatibilità) ──────────────────────────
 const isGistSettingsOpen = ref(false)
+
+// ── Workspace ─────────────────────────────────────────────────────────────────
+
+/** ID del workspace attivo (null = nessun workspace selezionato) */
+const activeWorkspaceId   = ref<string | null>(
+  typeof localStorage !== 'undefined' ? localStorage.getItem('pt_workspace_id') : null
+)
+/** Nome del workspace attivo */
+const activeWorkspaceName = ref<string>(
+  typeof localStorage !== 'undefined' ? (localStorage.getItem('pt_workspace_name') ?? '') : ''
+)
+/** true quando il modal di gestione workspace è aperto */
+const isWorkspaceModalOpen = ref(false)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // COMPUTED
@@ -138,15 +149,29 @@ function closeLightbox(): void {
 
 // ── Gist Settings ─────────────────────────────────────────────────────────────
 
-/** Apre il modal delle impostazioni Gist. */
-function openGistSettings(): void {
-  isGistSettingsOpen.value = true
+function openGistSettings(): void  { isGistSettingsOpen.value = true  }
+function closeGistSettings(): void { isGistSettingsOpen.value = false }
+
+// ── Workspace ─────────────────────────────────────────────────────────────────
+
+/** Imposta il workspace attivo e lo persiste in localStorage. */
+function setActiveWorkspace(id: string, name: string): void {
+  activeWorkspaceId.value   = id
+  activeWorkspaceName.value = name
+  localStorage.setItem('pt_workspace_id',   id)
+  localStorage.setItem('pt_workspace_name', name)
 }
 
-/** Chiude il modal delle impostazioni Gist. */
-function closeGistSettings(): void {
-  isGistSettingsOpen.value = false
+/** Deseleziona il workspace attivo. */
+function clearActiveWorkspace(): void {
+  activeWorkspaceId.value   = null
+  activeWorkspaceName.value = ''
+  localStorage.removeItem('pt_workspace_id')
+  localStorage.removeItem('pt_workspace_name')
 }
+
+function openWorkspaceModal():  void { isWorkspaceModalOpen.value = true  }
+function closeWorkspaceModal(): void { isWorkspaceModalOpen.value = false }
 
 // ── Modal ────────────────────────────────────────────────────────────────────
 
@@ -181,6 +206,9 @@ export function useAppState() {
     isLightboxOpen,
     lightboxSrc,
     isGistSettingsOpen,
+    activeWorkspaceId,
+    activeWorkspaceName,
+    isWorkspaceModalOpen,
     // computed
     hasOngoing,
     // methods
@@ -194,5 +222,9 @@ export function useAppState() {
     closeModal,
     openGistSettings,
     closeGistSettings,
+    setActiveWorkspace,
+    clearActiveWorkspace,
+    openWorkspaceModal,
+    closeWorkspaceModal,
   }
 }

@@ -23,6 +23,7 @@ import { usePhoto } from '~/composables/usePhoto'
 import { ACT } from '~/constants'
 import { DAYS_IT, MONTHS_SHORT } from '~/constants'
 import type { ActivityType } from '~/types'
+import { photoSrc } from '~/types'
 
 const appState = useAppState()
 const store = useStore()
@@ -148,7 +149,6 @@ async function stopActivity(): Promise<void> {
   appState.currentActivity.value = null
   appState.setGpsLoading(false)
   appState.showToast('Attività terminata')
-  store.syncNow()   // unico momento in cui si pushano i dati sul Gist
   initCostInputs()
 }
 
@@ -266,18 +266,18 @@ function deleteSitePhoto(index: number): void {
 function openLightbox(activityId: string, photoIndex: number): void {
   const activity = store.all().find(a => a.id === activityId)
   if (!activity?.photos?.[photoIndex]) return
-  appState.openLightbox(activity.photos[photoIndex].data)
+  appState.openLightbox(photoSrc(activity.photos[photoIndex]))
 }
 
 function openReceiptLightbox(activityId: string, photoIndex: number): void {
   const activity = store.all().find(a => a.id === activityId)
   if (!activity?.receiptPhotos?.[photoIndex]) return
-  appState.openLightbox(activity.receiptPhotos[photoIndex].data)
+  appState.openLightbox(photoSrc(activity.receiptPhotos[photoIndex]))
 }
 
 function openSiteLightbox(index: number): void {
   const photos = store.getSitePhotos(todayStr())
-  if (photos[index]) appState.openLightbox(photos[index].data)
+  if (photos[index]) appState.openLightbox(photoSrc(photos[index]))
 }
 
 // ── Note di cantiere ──────────────────────────────────────────────────
@@ -532,7 +532,7 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
           <div class="slabel">FOTO CANTIERE</div>
           <div v-if="sitePhotos.length" class="site-photos-grid">
             <div v-for="(p, i) in sitePhotos" :key="i" class="site-photo-wrap">
-              <img class="site-photo-thumb" :src="p.data" :alt="`Cantiere ${i + 1}`" @click="openSiteLightbox(i)">
+              <img class="site-photo-thumb" :src="photoSrc(p)" :alt="`Cantiere ${i + 1}`" @click="openSiteLightbox(i)">
               <button class="site-photo-del" @click="deleteSitePhoto(i)">✕</button>
             </div>
           </div>
@@ -760,7 +760,7 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
 
                   <!-- Miniature foto attività -->
                   <div v-if="a.photos?.length" class="log-photos">
-                    <img v-for="(p, pi) in a.photos" :key="pi" class="log-photo-thumb" :src="p.data"
+                    <img v-for="(p, pi) in a.photos" :key="pi" class="log-photo-thumb" :src="photoSrc(p)"
                       :alt="`Foto ${pi + 1}`" @click="openLightbox(a.id, pi)">
                   </div>
 
@@ -768,7 +768,7 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
                   <div v-if="a.type === 'pausa_pranzo' && a.receiptPhotos?.length" class="log-photos">
                     <div class="receipt-label">Scontrini:</div>
                     <img v-for="(p, pi) in a.receiptPhotos" :key="pi" class="log-photo-thumb receipt-thumb"
-                      :src="p.data" :alt="`Scontrino ${pi + 1}`" @click="openReceiptLightbox(a.id, pi)">
+                      :src="photoSrc(p)" :alt="`Scontrino ${pi + 1}`" @click="openReceiptLightbox(a.id, pi)">
                   </div>
 
                   <!-- Azioni bottoni -->

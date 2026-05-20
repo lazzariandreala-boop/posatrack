@@ -1,0 +1,20 @@
+# Variabili d'ambiente (NON committare mai)
+.env
+.env.local
+.env.*.local
+
+# Dipendenze
+node_modules/
+
+# Build output
+.nuxt/
+.output/
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+*.swp
