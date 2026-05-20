@@ -175,19 +175,19 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  background: var(--surface2);
+  background: var(--surface-2);
   border: 1px solid var(--border2);
   border-radius: var(--r-sm);
   color: var(--text);
-  font-family: 'DM Sans', sans-serif;
+  font-family: var(--ff);
   font-size: 13px;
   padding: 8px 10px;
   cursor: pointer;
   text-align: left;
   transition: border-color .15s;
 
-  &:focus { outline: none; border-color: var(--orange); }
-  .open & { border-color: var(--orange); }
+  &:focus { outline: none; border-color: var(--live); }
+  .open & { border-color: var(--live); }
 }
 
 .catalog-trigger-text {
@@ -250,7 +250,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
     border: none;
     outline: none;
     color: var(--text);
-    font-family: 'DM Sans', sans-serif;
+    font-family: var(--ff);
     font-size: 13px;
     &::placeholder { color: var(--muted); }
   }
@@ -266,7 +266,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: .6px;
-    color: var(--orange);
+    color: var(--live);
     position: sticky;
     top: 0;
     background: var(--surface);
@@ -285,7 +285,7 @@ onUnmounted(() => document.removeEventListener('mousedown', handleClickOutside))
     text-align: left;
     transition: background .1s;
 
-    &:hover    { background: var(--surface2); }
+    &:hover    { background: var(--surface-2); }
     &.selected { background: var(--surface3); }
   }
 

@@ -596,7 +596,7 @@ function fmtTimeMob(ts: number): string {
               </div>
 
               <!-- Posizione GPS fine (se disponibile e diversa) -->
-              <div v-if="a.endLoc" class="tl-loc" style="color: var(--dim)">
+              <div v-if="a.endLoc" class="tl-loc" style="color: var(--muted)">
                 <svg viewBox="0 0 24 24">
                   <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
                   <circle cx="12" cy="10" r="3"/>
@@ -641,7 +641,7 @@ function fmtTimeMob(ts: number): string {
               <div class="tl-dot" :style="{ background: ACT[a.type]?.color || '#888', opacity: 0.4 }" />
             </div>
             <div class="tl-body">
-              <div class="tl-time" style="color: var(--dim)">Non eseguito</div>
+              <div class="tl-time" style="color: var(--muted)">Non eseguito</div>
               <div class="tl-title" style="color: var(--muted)">{{ a.detail }}</div>
               <div class="tl-sub">{{ ACT[a.type]?.label || a.type }}<template v-if="a.orderNumber"> · Ord. {{ a.orderNumber }}</template></div>
             </div>
@@ -722,7 +722,7 @@ function fmtTimeMob(ts: number): string {
   font-family: 'Barlow Condensed', sans-serif;
   font-size: 28px;
   font-weight: 900;
-  color: var(--orange);
+  color: var(--live);
   line-height: 1;
   margin-bottom: 5px;
   font-variant-numeric: tabular-nums;
@@ -775,7 +775,7 @@ function fmtTimeMob(ts: number): string {
 .day-nav-btn {
   width: 34px;
   height: 34px;
-  background: var(--surface2);
+  background: var(--surface-2);
   border: 1px solid var(--border2);
   border-radius: var(--r-xs);
   display: flex;
@@ -789,7 +789,7 @@ function fmtTimeMob(ts: number): string {
   svg {
     width: 16px;
     height: 16px;
-    stroke: var(--text);
+    stroke: var(--ink);
     fill: none;
     stroke-width: 2;
     stroke-linecap: round;
@@ -842,7 +842,7 @@ function fmtTimeMob(ts: number): string {
 /* Riga posizione GPS */
 .tl-loc {
   font-size: 11px;
-  color: var(--dim);
+  color: var(--muted);
   margin-top: 5px;
   display: flex;
   align-items: center;
@@ -863,7 +863,7 @@ function fmtTimeMob(ts: number): string {
   border: 2px solid var(--border2);
   transition: transform .12s, border-color .12s;
 
-  &:hover { transform: scale(1.06); border-color: var(--orange); }
+  &:hover { transform: scale(1.06); border-color: var(--live); }
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -923,7 +923,7 @@ function fmtTimeMob(ts: number): string {
   cursor: pointer;
   transition: transform .12s, border-color .12s;
 
-  &:hover { transform: scale(1.04); border-color: var(--orange); }
+  &:hover { transform: scale(1.04); border-color: var(--live); }
 }
 
 /* Badge "+N" quando ci sono più di 8 foto */
@@ -931,7 +931,7 @@ function fmtTimeMob(ts: number): string {
   width: 72px;
   height: 72px;
   border-radius: 8px;
-  background: var(--surface2);
+  background: var(--surface-2);
   border: 2px solid var(--border2);
   display: flex;
   align-items: center;

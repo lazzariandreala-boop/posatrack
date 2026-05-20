@@ -172,7 +172,7 @@ watch(
   width: 40px;
   height: 40px;
   border: 3px solid rgba(255, 95, 0, .2);
-  border-top-color: var(--orange);
+  border-top-color: var(--live);
   border-radius: 50%;
   animation: spin .8s linear infinite;
 }
@@ -181,7 +181,7 @@ watch(
   font-family: 'Barlow Condensed', sans-serif;
   font-size: 28px;
   font-weight: 900;
-  color: var(--orange);
+  color: var(--live);
   text-transform: uppercase;
   letter-spacing: 1px;
 }
@@ -205,7 +205,7 @@ watch(
   font-family: 'Barlow Condensed', sans-serif;
   font-size: 40px;
   font-weight: 900;
-  color: var(--orange);
+  color: var(--live);
   text-transform: uppercase;
   letter-spacing: 1px;
 }

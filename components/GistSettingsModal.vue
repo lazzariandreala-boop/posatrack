@@ -322,7 +322,7 @@ function removeConfig(): void {
   color: var(--muted);
   transition: background .12s, color .12s;
 
-  &:hover { background: var(--surface2); color: var(--text); }
+  &:hover { background: var(--surface-2); color: var(--text); }
 
   svg {
     width: 16px; height: 16px;
@@ -348,12 +348,12 @@ function removeConfig(): void {
   padding: 10px 14px;
   border-radius: var(--r-sm);
   font-size: 13px;
-  background: var(--surface2);
+  background: var(--surface-2);
   color: var(--muted);
 
   &.ok     { background: rgba(34, 197, 94, .1);  color: var(--green); }
   &.error  { background: rgba(239, 68, 68, .1);  color: var(--red);   }
-  &.syncing { background: rgba(255, 95, 0, .1);  color: var(--orange); }
+  &.syncing { background: rgba(255, 95, 0, .1);  color: var(--live); }
 }
 
 .gist-status-dot {
@@ -365,7 +365,7 @@ function removeConfig(): void {
 
   .ok &     { background: var(--green);  }
   .error &  { background: var(--red);    }
-  .syncing & { background: var(--orange); animation: blink 1s infinite; }
+  .syncing & { background: var(--live); animation: blink 1s infinite; }
 }
 
 // ── Section ─────────────────────────────────────────────────────────
@@ -390,7 +390,7 @@ function removeConfig(): void {
 
 .gist-label-hint {
   font-size: 11px;
-  color: var(--dim);
+  color: var(--muted);
   margin-left: 4px;
 
   code {
@@ -398,10 +398,10 @@ function removeConfig(): void {
     background: var(--surface3);
     padding: 1px 4px;
     border-radius: 3px;
-    color: var(--orange);
+    color: var(--live);
   }
 
-  a { color: var(--orange); text-decoration: none; &:hover { text-decoration: underline; } }
+  a { color: var(--live); text-decoration: none; &:hover { text-decoration: underline; } }
 }
 
 .gist-input-wrap {
@@ -410,7 +410,7 @@ function removeConfig(): void {
 
 .gist-input {
   width: 100%;
-  background: var(--surface2);
+  background: var(--surface-2);
   border: 1px solid var(--border2);
   border-radius: var(--r-sm);
   padding: 10px 40px 10px 12px;
@@ -420,8 +420,8 @@ function removeConfig(): void {
   outline: none;
   transition: border-color .15s;
 
-  &::placeholder { color: var(--dim); font-family: 'DM Sans', sans-serif; }
-  &:focus { border-color: var(--orange); }
+  &::placeholder { color: var(--muted); font-family: var(--ff); }
+  &:focus { border-color: var(--live); }
 }
 
 .gist-eye-btn {
@@ -471,14 +471,14 @@ function removeConfig(): void {
   gap: 8px;
   margin-top: 10px;
   font-size: 13px;
-  color: var(--orange);
+  color: var(--live);
 }
 
 .gist-spinner {
   display: inline-block;
   width: 14px; height: 14px;
   border: 2px solid rgba(255, 95, 0, .3);
-  border-top-color: var(--orange);
+  border-top-color: var(--live);
   border-radius: 50%;
   animation: spin .7s linear infinite;
 }
@@ -495,7 +495,7 @@ function removeConfig(): void {
   border-radius: var(--r-sm);
   font-size: 14px;
   font-weight: 500;
-  font-family: 'DM Sans', sans-serif;
+  font-family: var(--ff);
   cursor: pointer;
   border: none;
   transition: background .12s, opacity .12s;
@@ -504,13 +504,13 @@ function removeConfig(): void {
 }
 
 .gist-btn-primary {
-  background: var(--orange);
+  background: var(--live);
   color: #fff;
   &:not(:disabled):hover { background: var(--orange-d); }
 }
 
 .gist-btn-secondary {
-  background: var(--surface2);
+  background: var(--surface-2);
   color: var(--text);
   border: 1px solid var(--border2);
   &:not(:disabled):hover { background: var(--surface3); }
@@ -527,7 +527,7 @@ function removeConfig(): void {
 .gist-info {
   font-size: 12px;
   color: var(--muted);
-  background: var(--surface2);
+  background: var(--surface-2);
   border-radius: var(--r-sm);
   padding: 12px 14px;
   line-height: 1.6;
