@@ -138,6 +138,7 @@ watch(
       <SummaryView   v-show="currentView === 'summary'" />
       <DashboardView v-show="currentView === 'dashboard'" />
       <PlanningView  v-show="currentView === 'planning'" />
+      <!-- map e profile sono mobile-only: map mostra SummaryView con mappa, profile mostra WorkspaceModal -->
     </div>
 
     <!-- Bottom nav: visibile solo su mobile -->

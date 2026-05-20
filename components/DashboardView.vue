@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, onUnmounted, onMounted } from 'vue'
 import { useAppState }  from '~/composables/useAppState'
 import { useStore }     from '~/composables/useStore'
 import { useAuth }      from '~/composables/useAuth'
@@ -10,7 +10,7 @@ const appState = useAppState()
 const store    = useStore()
 const auth     = useAuth()
 
-// ── Period selection ──────────────────────────────────────────────────
+// ── Period ────────────────────────────────────────────────────────────
 const periodDays = ref(7)
 
 function todayStr(): string {
@@ -29,19 +29,17 @@ const uniqueDates = computed(() => [
   ...new Set(periodActivities.value.map(a => a.date))
 ].sort().reverse())
 
-// ── Aggregate stats ───────────────────────────────────────────────────
-const statDays  = computed(() => uniqueDates.value.length)
-const statActs  = computed(() => periodActivities.value.length)
-
-const statHours = computed(() => {
-  const completed = periodActivities.value.filter(a => a.duration !== null)
-  const totalSec  = completed.reduce((s, a) => s + (a.duration ?? 0), 0)
-  return totalSec > 0 ? `${(Math.round(totalSec / 360) / 10).toFixed(1)}h` : '0h'
-})
-
+// ── Stats ─────────────────────────────────────────────────────────────
+const statDays   = computed(() => uniqueDates.value.length)
+const statActs   = computed(() => periodActivities.value.length)
 const statPhotos = computed(() =>
   periodActivities.value.reduce((s, a) => s + (a.photos?.length || 0), 0)
 )
+const statHours  = computed(() => {
+  const secs = periodActivities.value.filter(a => a.duration)
+    .reduce((s, a) => s + (a.duration ?? 0), 0)
+  return secs > 0 ? `${(Math.round(secs / 360) / 10).toFixed(1)}h` : '0h'
+})
 
 // ── Today ─────────────────────────────────────────────────────────────
 const todayActivities   = computed(() => store.forRange(todayStr(), todayStr()))
@@ -49,18 +47,62 @@ const ongoingActivities = computed(() => todayActivities.value.filter(a => !a.en
 const ongoingCount      = computed(() => ongoingActivities.value.length)
 
 const todayHours = computed(() => {
-  const secs = todayActivities.value
-    .filter(a => a.duration)
+  const secs = todayActivities.value.filter(a => a.duration)
     .reduce((s, a) => s + (a.duration ?? 0), 0)
   if (!secs) return '0:00'
-  const h = Math.floor(secs / 3600)
-  const m = Math.floor((secs % 3600) / 60)
-  return `${h}:${String(m).padStart(2, '0')}`
+  return `${Math.floor(secs / 3600)}:${String(Math.floor((secs % 3600) / 60)).padStart(2, '0')}`
 })
 
-const recentActivities = computed(() =>
-  store.all().slice().sort((a, b) => b.startTime - a.startTime).slice(0, 6)
+const workOrdersCount = computed(() => store.getAllWorkOrders().length)
+const todayWorkOrders = computed(() => store.getWorkOrdersForDate(todayStr()))
+
+// ── Timeline ──────────────────────────────────────────────────────────
+const TL_START = 7
+const TL_END   = 18
+const TL_SPAN  = TL_END - TL_START
+
+const timelineView = ref<'oggi' | 'settimana'>('oggi')
+
+interface TimelineBlock {
+  id: string; type: string; detail: string; color: string
+  leftPct: number; widthPct: number; isLive: boolean
+  startLabel: string; orderNumber?: string
+}
+
+const timelineBlocks = computed((): TimelineBlock[] =>
+  todayActivities.value
+    .filter(a => {
+      const h = new Date(a.startTime).getHours() + new Date(a.startTime).getMinutes() / 60
+      return h < TL_END
+    })
+    .map(a => {
+      const start  = new Date(a.startTime)
+      const startH = start.getHours() + start.getMinutes() / 60
+      const endTs  = a.endTime ? new Date(a.endTime) : new Date()
+      const endH   = endTs.getHours() + endTs.getMinutes() / 60
+      const leftPct  = Math.max(0, (startH - TL_START) / TL_SPAN * 100)
+      const rightPct = Math.min(100, (endH - TL_START) / TL_SPAN * 100)
+      return {
+        id:          a.id,
+        type:        a.type,
+        detail:      a.detail,
+        color:       ACT[a.type]?.color ?? '#6b7280',
+        leftPct,
+        widthPct:    Math.max(1.5, rightPct - leftPct),
+        isLive:      !a.endTime,
+        startLabel:  `${String(start.getHours()).padStart(2,'0')}:${String(start.getMinutes()).padStart(2,'0')}`,
+        orderNumber: a.orderNumber,
+      }
+    })
 )
+
+const currentTimePct = computed(() => {
+  const now  = new Date()
+  const nowH = now.getHours() + now.getMinutes() / 60
+  return Math.max(0, Math.min(100, (nowH - TL_START) / TL_SPAN * 100))
+})
+
+const timelineHours = Array.from({ length: TL_SPAN + 1 }, (_, i) => TL_START + i)
 
 // ── Formatting ────────────────────────────────────────────────────────
 function fmtDur(seconds: number): string {
@@ -80,7 +122,7 @@ function fmtDateLabel(dateStr: string): string {
 
 function fmtTime(ts: number): string {
   const d = new Date(ts)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`
 }
 
 function fmtRelTime(ts: number): string {
@@ -90,21 +132,73 @@ function fmtRelTime(ts: number): string {
   return `${Math.floor(diff / 60)}h fa`
 }
 
-// ── Day rows ──────────────────────────────────────────────────────────
+// ── User / workspace ──────────────────────────────────────────────────
+const userName = computed(() => {
+  const name = auth.currentUser.value?.displayName || auth.currentUser.value?.email || ''
+  return name.split(' ')[0] || 'ciao'
+})
+const userInitials = computed(() => {
+  const name = auth.currentUser.value?.displayName || auth.currentUser.value?.email || 'U'
+  return name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
+})
+const workspaceName = computed(() => appState.activeWorkspaceName.value || 'Workspace')
+
+// ── Today long date ───────────────────────────────────────────────────
+const todayLongDate = computed(() => {
+  const d = new Date()
+  const days   = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato']
+  const months = ['gennaio','febbraio','marzo','aprile','maggio','giugno','luglio','agosto','settembre','ottobre','novembre','dicembre']
+  return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}`
+})
+
+const todayShortDate = computed(() => {
+  const d = new Date()
+  const months = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic']
+  return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`
+})
+
+// ── Recent activities ─────────────────────────────────────────────────
+const recentActivities = computed(() =>
+  store.all().slice().sort((a, b) => b.startTime - a.startTime).slice(0, 6)
+)
+
+// ── Ongoing activity elapsed time (live updated) ──────────────────────
+const elapsedSecs = ref(0)
+let elapsedTimer: ReturnType<typeof setInterval> | null = null
+
+function startElapsedTimer(): void {
+  if (elapsedTimer) clearInterval(elapsedTimer)
+  elapsedTimer = setInterval(() => {
+    const ongoing = ongoingActivities.value[0]
+    if (ongoing) {
+      elapsedSecs.value = Math.floor((Date.now() - ongoing.startTime) / 1000)
+    } else {
+      elapsedSecs.value = 0
+    }
+  }, 1000)
+}
+
+const elapsedDisplay = computed(() => {
+  if (!elapsedSecs.value) return '—'
+  const h = Math.floor(elapsedSecs.value / 3600)
+  const m = Math.floor((elapsedSecs.value % 3600) / 60)
+  return h > 0 ? `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}` : `${String(m).padStart(2,'0')}m`
+})
+
+// ── Day history ───────────────────────────────────────────────────────
 interface DayRow {
   dateStr: string; label: string; count: number; photoCnt: number; totalSec: number; types: string[]
 }
 
 const dayRows = computed<DayRow[]>(() =>
-  uniqueDates.value.map(dateStr => {
+  uniqueDates.value.slice(0, 7).map(dateStr => {
     const dayActs  = periodActivities.value.filter(a => a.date === dateStr)
     const daySec   = dayActs.filter(a => a.duration).reduce((s, a) => s + (a.duration ?? 0), 0)
-    const photoCnt = dayActs.reduce((s, a) => s + (a.photos?.length || 0), 0)
     return {
       dateStr,
       label:    fmtDateLabel(dateStr),
       count:    dayActs.length,
-      photoCnt,
+      photoCnt: dayActs.reduce((s, a) => s + (a.photos?.length || 0), 0),
       totalSec: daySec,
       types:    [...new Set(dayActs.map(a => a.type))],
     }
@@ -118,262 +212,367 @@ function goToDay(dateStr: string): void {
 
 // ── Bar chart ─────────────────────────────────────────────────────────
 let barChartInstance: any = null
-
+let barChartRightInstance: any = null
 const barChartDates  = computed(() => [...uniqueDates.value].sort().slice(-14))
 const barChartLabels = computed(() => barChartDates.value.map(d => {
   const dt = new Date(d + 'T12:00:00')
   return `${dt.getDate()}/${dt.getMonth() + 1}`
 }))
-const barChartData   = computed(() =>
+const barChartData = computed(() =>
   barChartDates.value.map(d =>
-    Math.round(
-      periodActivities.value
-        .filter(a => a.date === d && a.duration !== null)
-        .reduce((s, a) => s + (a.duration ?? 0), 0) / 360
-    ) / 10
+    Math.round(periodActivities.value.filter(a => a.date === d && a.duration)
+      .reduce((s, a) => s + (a.duration ?? 0), 0) / 360) / 10
   )
 )
+
+const chartConfig = (small = false) => ({
+  type: 'bar' as const,
+  data: {
+    labels:   barChartLabels.value,
+    datasets: [{ label: 'Ore', data: barChartData.value, backgroundColor: 'rgba(45,91,255,.5)', borderColor: '#2D5BFF', borderWidth: small ? 1 : 2, borderRadius: 4 }],
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { display: false }, tooltip: { backgroundColor: '#1D1C1A', borderColor: '#2A2826', borderWidth: 1, titleColor: '#F0EFE9', bodyColor: '#6B6963', callbacks: { label: (c: any) => ` ${c.raw}h` } } },
+    scales: {
+      x: { grid: { color: 'rgba(255,255,255,.03)' }, ticks: { color: '#6B6963', font: { size: small ? 9 : 10 } } },
+      y: { grid: { color: 'rgba(255,255,255,.03)' }, ticks: { color: '#6B6963', font: { size: small ? 9 : 10 } }, beginAtZero: true },
+    },
+  },
+})
 
 async function renderBarChart(): Promise<void> {
   const { Chart, registerables } = await import('chart.js')
   Chart.register(...registerables)
   if (barChartInstance) { barChartInstance.destroy(); barChartInstance = null }
   await nextTick()
-  const canvas = document.getElementById('bar-chart') as HTMLCanvasElement | null
+  const canvas = document.getElementById('db-bar-chart-main') as HTMLCanvasElement | null
   if (!canvas) return
-  barChartInstance = new Chart(canvas.getContext('2d')!, {
-    type: 'bar',
-    data: {
-      labels:   barChartLabels.value,
-      datasets: [{
-        label:           'Ore lavorate',
-        data:            barChartData.value,
-        backgroundColor: 'rgba(45, 91, 255, .45)',
-        borderColor:     '#2D5BFF',
-        borderWidth:     2,
-        borderRadius:    6,
-      }],
-    },
-    options: {
-      responsive:          true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          backgroundColor: '#1D1C1A',
-          borderColor:     '#2A2826',
-          borderWidth:     1,
-          titleColor:      '#F0EFE9',
-          bodyColor:       '#6B6963',
-          callbacks: { label: (ctx: any) => ` ${ctx.raw}h lavorate` },
-        },
-      },
-      scales: {
-        x: { grid: { color: 'rgba(255,255,255,.03)' }, ticks: { color: '#6B6963', font: { size: 11 } } },
-        y: { grid: { color: 'rgba(255,255,255,.03)' }, ticks: { color: '#6B6963', font: { size: 11 } }, beginAtZero: true },
-      },
-    },
-  })
+  barChartInstance = new Chart(canvas.getContext('2d')!, chartConfig())
 }
 
-watch(periodDays, async () => { await nextTick(); await renderBarChart() })
-watch(() => appState.currentView.value, async (view) => {
-  if (view === 'dashboard') { await nextTick(); await renderBarChart() }
-})
-watch(barChartData, async () => {
-  if (appState.currentView.value === 'dashboard') { await nextTick(); await renderBarChart() }
-})
-onUnmounted(() => { if (barChartInstance) { barChartInstance.destroy(); barChartInstance = null } })
+async function renderBarChartRight(): Promise<void> {
+  const { Chart, registerables } = await import('chart.js')
+  Chart.register(...registerables)
+  if (barChartRightInstance) { barChartRightInstance.destroy(); barChartRightInstance = null }
+  await nextTick()
+  const canvas = document.getElementById('db-bar-chart-right') as HTMLCanvasElement | null
+  if (!canvas) return
+  barChartRightInstance = new Chart(canvas.getContext('2d')!, chartConfig(true))
+}
 
-// ── User / workspace ──────────────────────────────────────────────────
-const userName = computed(() => {
-  const name = auth.currentUser.value?.displayName || auth.currentUser.value?.email || ''
-  return name.split(' ')[0] || 'ciao'
-})
+watch(periodDays, async () => { await nextTick(); await renderBarChart(); await renderBarChartRight() })
+watch(() => appState.currentView.value, async (v) => { if (v === 'dashboard') { await nextTick(); await renderBarChart(); await renderBarChartRight() } })
+watch(barChartData, async () => { if (appState.currentView.value === 'dashboard') { await nextTick(); await renderBarChart(); await renderBarChartRight() } })
 
-const userInitials = computed(() => {
-  const name = auth.currentUser.value?.displayName || auth.currentUser.value?.email || 'U'
-  return name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
-})
-
-const workspaceName = computed(() => appState.activeWorkspaceName.value || 'Workspace')
-
-const todayHeading = computed(() => {
-  const d = new Date()
-  const days   = ['domenica','lunedì','martedì','mercoledì','giovedì','venerdì','sabato']
-  const months = ['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic']
-  return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}`
+onMounted(async () => { startElapsedTimer(); await nextTick(); await renderBarChartRight() })
+onUnmounted(() => {
+  if (barChartInstance) { barChartInstance.destroy(); barChartInstance = null }
+  if (barChartRightInstance) { barChartRightInstance.destroy(); barChartRightInstance = null }
+  if (elapsedTimer) clearInterval(elapsedTimer)
 })
 
-const todayShort = computed(() => {
-  const d = new Date()
-  const months = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic']
-  return `${workspaceName.value} · ${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`
-})
+// ── Search ────────────────────────────────────────────────────────────
+const searchQuery = ref('')
 </script>
 
 <template>
-  <div class="view" id="view-dashboard">
+  <div id="view-dashboard">
 
-    <!-- ── Top header ──────────────────────────────────────────────── -->
-    <div class="db-top">
-      <div class="db-greeting">
-        <div class="db-ws-label">{{ todayShort }}</div>
-        <h1 class="db-title">Buongiorno, {{ userName }}.</h1>
-        <div class="db-subtitle">
-          <template v-if="ongoingCount > 0">{{ ongoingCount }} attività in corso</template>
-          <template v-else>Nessuna attività in corso</template>
-          · {{ todayActivities.length }} lavorazioni oggi
+    <!-- ── TOPBAR ────────────────────────────────────────────────────── -->
+    <div class="db-topbar">
+      <div class="db-topbar-left">
+        <div class="db-topbar-meta">{{ workspaceName }} · {{ todayShortDate }}</div>
+        <h1 class="db-topbar-title">Buongiorno, {{ userName }}.</h1>
+        <div class="db-topbar-sub">
+          <span v-if="ongoingCount > 0">
+            <span class="db-pulse-dot"></span>
+            {{ ongoingCount }} attività in corso
+          </span>
+          <span v-else>Nessuna attività in corso</span>
+          <span class="db-topbar-sep">·</span>
+          <span>{{ todayActivities.length }} lavorazioni oggi</span>
         </div>
       </div>
-      <div class="db-top-actions">
-        <div class="db-search">
+      <div class="db-topbar-right">
+        <div class="db-search-wrap">
           <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          <span>Cerca…</span>
+          <input
+            v-model="searchQuery"
+            class="db-search-input"
+            type="text"
+            placeholder="Cerca lavorazioni, cantieri, attività..."
+          />
           <kbd>⌘K</kbd>
         </div>
-        <button class="db-cta" @click="appState.navigate('planning')">
+        <button class="db-new-btn" @click="appState.navigate('planning')">
           <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           Nuova lavorazione
         </button>
       </div>
     </div>
 
-    <!-- ── Stat cards ──────────────────────────────────────────────── -->
-    <div class="db-stats">
-      <div class="db-stat">
-        <div class="db-stat-label">Lavorazioni</div>
-        <div class="db-stat-val">{{ statActs }}</div>
-        <div class="db-stat-sub">{{ periodDays > 0 ? `ultimi ${periodDays}g` : 'tutto storico' }}</div>
-      </div>
-      <div class="db-stat">
-        <div class="db-stat-label">In corso ora</div>
-        <div class="db-stat-val">{{ ongoingCount }}</div>
-        <div class="db-stat-sub" :class="{ 'db-stat-live': ongoingCount > 0 }">
-          {{ ongoingCount > 0 ? 'tracking live' : 'nessuna attiva' }}
+    <!-- ── BODY: main + right panel ──────────────────────────────────── -->
+    <div class="db-body">
+
+      <!-- ── MAIN COLUMN ─────────────────────────────────────────────── -->
+      <div class="db-main">
+
+        <!-- KPI Cards -->
+        <div class="db-kpis">
+
+          <div class="db-kpi">
+            <div class="db-kpi-label">Lavorazioni pianificate</div>
+            <div class="db-kpi-val">{{ workOrdersCount }}</div>
+            <div class="db-kpi-sub">
+              <svg viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+              {{ periodDays > 0 ? `ultimi ${periodDays}g` : 'tutto' }}
+            </div>
+          </div>
+
+          <div class="db-kpi db-kpi-live" :class="{ 'has-live': ongoingCount > 0 }">
+            <div class="db-kpi-label">In corso ora</div>
+            <div class="db-kpi-val">
+              {{ ongoingCount }}
+              <span v-if="ongoingCount > 0" class="db-kpi-live-dot"></span>
+            </div>
+            <div class="db-kpi-sub db-kpi-sub-live" v-if="ongoingCount > 0">tracking live</div>
+            <div class="db-kpi-sub" v-else>nessuna attiva</div>
+          </div>
+
+          <div class="db-kpi">
+            <div class="db-kpi-label">Ore tracciate · oggi</div>
+            <div class="db-kpi-val db-kpi-mono">{{ todayHours }}</div>
+            <div class="db-kpi-sub">
+              {{ todayActivities.length }} attività completate
+            </div>
+          </div>
+
+          <div class="db-kpi">
+            <div class="db-kpi-label">Foto scattate</div>
+            <div class="db-kpi-val">{{ statPhotos }}</div>
+            <div class="db-kpi-sub">{{ statActs }} attività · {{ statDays }}g</div>
+          </div>
+
+        </div><!-- /db-kpis -->
+
+        <!-- Period tabs -->
+        <div class="db-period-row">
+          <div class="db-period-tabs">
+            <button :class="{ active: periodDays === 7  }" @click="periodDays = 7">7 giorni</button>
+            <button :class="{ active: periodDays === 30 }" @click="periodDays = 30">30 giorni</button>
+            <button :class="{ active: periodDays === 90 }" @click="periodDays = 90">90 giorni</button>
+            <button :class="{ active: periodDays === 0  }" @click="periodDays = 0">Tutto</button>
+          </div>
         </div>
-      </div>
-      <div class="db-stat">
-        <div class="db-stat-label">Ore tracciate · oggi</div>
-        <div class="db-stat-val db-stat-mono">{{ todayHours }}</div>
-        <div class="db-stat-sub">{{ todayActivities.length }} attività</div>
-      </div>
-      <div class="db-stat">
-        <div class="db-stat-label">Foto scattate</div>
-        <div class="db-stat-val">{{ statPhotos }}</div>
-        <div class="db-stat-sub">nel periodo</div>
-      </div>
-    </div>
 
-    <!-- ── Period tabs ─────────────────────────────────────────────── -->
-    <div class="db-period-row">
-      <div class="db-period-tabs">
-        <button :class="{ active: periodDays === 7  }" @click="periodDays = 7">7 giorni</button>
-        <button :class="{ active: periodDays === 30 }" @click="periodDays = 30">30 giorni</button>
-        <button :class="{ active: periodDays === 90 }" @click="periodDays = 90">90 giorni</button>
-        <button :class="{ active: periodDays === 0  }" @click="periodDays = 0">Tutto</button>
-      </div>
-    </div>
-
-    <!-- ── Main 2-column grid ──────────────────────────────────────── -->
-    <div class="db-grid">
-
-      <!-- Left: Today + In corso + Storico ──────────────────────── -->
-      <div class="db-col-main">
-
-        <!-- Giornata di oggi -->
+        <!-- ── Giornata di oggi (Timeline) ────────────────────────────── -->
         <div class="db-section">
           <div class="db-section-head">
-            <div>
+            <div class="db-section-head-left">
               <span class="db-section-title">Giornata di oggi</span>
-              <span class="db-section-sub">{{ todayHeading }}</span>
+              <span class="db-section-date-pill">{{ todayLongDate }}</span>
+            </div>
+            <div class="db-view-toggle">
+              <button :class="{ active: timelineView === 'oggi' }" @click="timelineView = 'oggi'">Oggi</button>
+              <button :class="{ active: timelineView === 'settimana' }" @click="timelineView = 'settimana'">Settimana</button>
             </div>
           </div>
 
-          <div v-if="!todayActivities.length" class="db-empty">
-            <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-            Nessuna attività oggi
-          </div>
-          <div v-else class="db-today-list">
-            <div
-              v-for="a in todayActivities.slice().sort((x, y) => x.startTime - y.startTime)"
-              :key="a.id"
-              class="db-today-item"
-            >
-              <div class="db-today-time">{{ fmtTime(a.startTime) }}</div>
-              <div class="db-today-line">
-                <div class="db-today-dot" :class="{ live: !a.endTime }"></div>
-                <div class="db-today-track"></div>
+          <Transition name="fade" mode="out-in">
+
+            <!-- OGGI: ora-per-ora timeline -->
+            <div v-if="timelineView === 'oggi'" class="db-timeline" key="oggi">
+
+              <!-- Empty state -->
+              <div v-if="!todayActivities.length" class="db-tl-empty">
+                <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+                Nessuna attività registrata oggi
               </div>
-              <div class="db-today-content">
-                <div class="db-today-type">
-                  <span class="db-type-dot" :style="{ background: ACT[a.type]?.color || 'var(--muted)' }"></span>
-                  {{ ACT[a.type]?.label || a.type }}
-                  <span v-if="!a.endTime" class="db-live-badge">live</span>
+
+              <template v-else>
+                <!-- Time axis -->
+                <div class="db-tl-axis">
+                  <div
+                    v-for="h in timelineHours"
+                    :key="h"
+                    class="db-tl-hour"
+                    :style="{ left: `${(h - TL_START) / TL_SPAN * 100}%` }"
+                  >{{ String(h).padStart(2,'0') }}</div>
                 </div>
-                <div class="db-today-addr" v-if="a.detail">{{ a.detail }}</div>
-              </div>
-              <div class="db-today-dur" v-if="a.duration">{{ fmtDur(a.duration) }}</div>
-            </div>
-          </div>
-        </div>
 
-        <!-- Lavorazioni in corso -->
-        <div class="db-section" v-if="ongoingActivities.length">
+                <!-- Track row -->
+                <div class="db-tl-track-wrap">
+
+                  <!-- Operator label -->
+                  <div class="db-tl-who">
+                    <div class="db-tl-avatar">{{ userInitials }}</div>
+                    <span class="db-tl-name">{{ userName }}</span>
+                  </div>
+
+                  <!-- Track -->
+                  <div class="db-tl-track">
+
+                    <!-- Grid lines -->
+                    <div class="db-tl-grid">
+                      <div
+                        v-for="h in timelineHours"
+                        :key="h"
+                        class="db-tl-gridline"
+                        :style="{ left: `${(h - TL_START) / TL_SPAN * 100}%` }"
+                      />
+                    </div>
+
+                    <!-- Activity blocks -->
+                    <div
+                      v-for="block in timelineBlocks"
+                      :key="block.id"
+                      class="db-tl-block"
+                      :class="{ 'is-live': block.isLive }"
+                      :style="{
+                        left:  `${block.leftPct}%`,
+                        width: `${block.widthPct}%`,
+                        background: block.color + (block.isLive ? 'FF' : 'BB'),
+                        borderColor: block.color,
+                      }"
+                      :title="`${block.orderNumber ? block.orderNumber + ' · ' : ''}${ACT[block.type]?.label} — ${block.startLabel}`"
+                    >
+                      <span class="db-tl-block-label">
+                        <span v-if="block.orderNumber" class="db-tl-block-code">{{ block.orderNumber }}</span>
+                        {{ ACT[block.type]?.emoji }} {{ ACT[block.type]?.label }}
+                      </span>
+                    </div>
+
+                    <!-- Current time line -->
+                    <div
+                      class="db-tl-now"
+                      :style="{ left: `${currentTimePct}%` }"
+                    >
+                      <div class="db-tl-now-dot"></div>
+                    </div>
+
+                  </div><!-- /db-tl-track -->
+                </div><!-- /db-tl-track-wrap -->
+
+                <!-- Work orders for today (below track) -->
+                <div v-if="todayWorkOrders.length" class="db-tl-orders">
+                  <div
+                    v-for="wo in todayWorkOrders.slice(0, 4)"
+                    :key="wo.id"
+                    class="db-tl-order-chip"
+                    :style="{ borderLeftColor: ACT[wo.type]?.color }"
+                  >
+                    <span v-if="wo.orderNumber" class="db-tl-order-code">{{ wo.orderNumber }}</span>
+                    <span>{{ ACT[wo.type]?.emoji }} {{ wo.detail.length > 30 ? wo.detail.slice(0, 28) + '…' : wo.detail }}</span>
+                  </div>
+                </div>
+
+              </template>
+            </div><!-- /oggi -->
+
+            <!-- SETTIMANA: bar chart -->
+            <div v-else class="db-timeline db-chart-view" key="settimana">
+              <div class="db-chart-wrap">
+                <canvas id="db-bar-chart-main" />
+              </div>
+            </div>
+
+          </Transition>
+        </div><!-- /timeline section -->
+
+        <!-- ── Lavorazioni in corso ──────────────────────────────────── -->
+        <div class="db-section">
           <div class="db-section-head">
-            <span class="db-section-title">Lavorazioni in corso</span>
-            <span class="db-live-badge db-live-badge-lg">{{ ongoingCount }} live</span>
+            <div class="db-section-head-left">
+              <span class="db-section-title">Lavorazioni in corso</span>
+              <span v-if="ongoingCount > 0" class="db-live-badge">
+                <span class="db-live-badge-dot"></span>
+                {{ ongoingCount }} live
+              </span>
+            </div>
+            <button class="db-link-btn" @click="appState.navigate('summary')">
+              Apri tutte →
+            </button>
           </div>
-          <div class="db-ongoing-list">
-            <div v-for="a in ongoingActivities" :key="a.id" class="db-ongoing-card">
-              <div class="db-ongoing-top">
-                <span class="db-ongoing-id">{{ a.id?.slice(-6).toUpperCase() || '—' }}</span>
-                <span class="db-ongoing-status">In corso</span>
+
+          <div v-if="!ongoingActivities.length" class="db-section-empty">
+            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            Nessuna attività in corso al momento
+          </div>
+
+          <div v-else class="db-jobs">
+            <div
+              v-for="a in ongoingActivities.slice(0, 3)"
+              :key="a.id"
+              class="db-job-card"
+            >
+              <div class="db-job-top">
+                <div class="db-job-id-wrap">
+                  <span v-if="a.orderNumber" class="db-job-code">{{ a.orderNumber }}</span>
+                  <span class="db-job-type-badge" :style="{ background: `${ACT[a.type]?.color}22`, color: ACT[a.type]?.color }">
+                    {{ ACT[a.type]?.emoji }} {{ ACT[a.type]?.label }}
+                  </span>
+                </div>
+                <span class="db-job-status-live">
+                  <span class="db-live-badge-dot"></span>
+                  In corso
+                </span>
               </div>
-              <div class="db-ongoing-type">
-                {{ ACT[a.type]?.emoji }} {{ ACT[a.type]?.label }}
-              </div>
-              <div class="db-ongoing-meta">
-                <span v-if="a.detail">
+
+              <div class="db-job-title">{{ a.detail || '—' }}</div>
+
+              <div class="db-job-meta">
+                <span v-if="a.startLoc">
                   <svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                  {{ a.detail }}
+                  GPS disponibile
                 </span>
                 <span>
                   <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
                   Avviata {{ fmtTime(a.startTime) }}
                 </span>
+                <span v-if="a.photos?.length">
+                  <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                  {{ a.photos.length }} foto
+                </span>
               </div>
+
+              <!-- Progress bar (based on elapsed time vs. working day) -->
+              <div class="db-job-progress-wrap">
+                <div class="db-job-progress-bar">
+                  <div
+                    class="db-job-progress-fill"
+                    :style="{
+                      width: `${Math.min(100, Math.floor((Date.now() - a.startTime) / (8 * 3600000) * 100))}%`,
+                      background: ACT[a.type]?.color,
+                    }"
+                  />
+                </div>
+                <span class="db-job-progress-label">{{ elapsedDisplay }}</span>
+              </div>
+
             </div>
           </div>
-        </div>
+        </div><!-- /lavorazioni in corso -->
 
-        <!-- Storico giorni -->
+        <!-- ── Storico giornate ──────────────────────────────────────── -->
         <div class="db-section">
           <div class="db-section-head">
             <span class="db-section-title">Storico giornate</span>
             <span class="db-section-sub">{{ statDays }} giorni</span>
           </div>
-          <div v-if="!dayRows.length" class="db-empty">
+          <div v-if="!dayRows.length" class="db-section-empty">
             <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
             Nessun dato nel periodo selezionato
           </div>
-          <div
-            v-for="row in dayRows"
-            :key="row.dateStr"
-            class="db-day-row"
-            @click="goToDay(row.dateStr)"
-          >
+          <div v-for="row in dayRows" :key="row.dateStr" class="db-day-row" @click="goToDay(row.dateStr)">
             <div class="db-day-date">{{ row.label }}</div>
             <div class="db-day-body">
-              <div class="db-day-count">
-                {{ row.count }} attività
-                <span v-if="row.photoCnt" class="db-day-photos"> · 📸 {{ row.photoCnt }}</span>
-              </div>
+              <div class="db-day-count">{{ row.count }} attività<span v-if="row.photoCnt"> · 📸 {{ row.photoCnt }}</span></div>
               <div class="db-day-types">
                 <span
                   v-for="t in row.types"
                   :key="t"
-                  class="type-pill"
+                  class="db-type-pill"
                   :style="{ background: `${ACT[t]?.color}22`, color: ACT[t]?.color }"
                 >{{ ACT[t]?.emoji }} {{ ACT[t]?.label }}</span>
               </div>
@@ -383,131 +582,222 @@ const todayShort = computed(() => {
           </div>
         </div>
 
-      </div><!-- /db-col-main -->
+      </div><!-- /db-main -->
 
-      <!-- Right: Chart + Feed ────────────────────────────────────── -->
-      <div class="db-col-side">
+      <!-- ── RIGHT PANEL ──────────────────────────────────────────────── -->
+      <div class="db-right">
 
-        <!-- Bar chart -->
-        <div class="db-section">
-          <div class="db-section-head">
-            <span class="db-section-title">Ore per giorno</span>
-            <span class="db-section-sub">{{ statHours }} totali</span>
+        <!-- Team in campo -->
+        <div class="db-panel-section">
+          <div class="db-panel-head">
+            <span class="db-panel-title">Team in campo</span>
+            <span v-if="ongoingCount > 0" class="db-live-badge">
+              <span class="db-live-badge-dot"></span>
+              live
+            </span>
           </div>
-          <div class="db-chart-wrap">
-            <canvas id="bar-chart" />
+
+          <!-- Map placeholder -->
+          <div class="db-map-placeholder">
+            <div class="db-map-grid"></div>
+            <template v-if="ongoingActivities.length">
+              <div
+                v-for="(a, idx) in ongoingActivities"
+                :key="a.id"
+                class="db-map-marker"
+                :style="{ top: `${25 + (idx * 37 + 17) % 50}%`, left: `${20 + (idx * 53 + 23) % 60}%` }"
+              >
+                <div class="db-map-marker-dot" :style="{ background: ACT[a.type]?.color }"></div>
+                <div class="db-map-marker-label" v-if="a.orderNumber">{{ a.orderNumber }}</div>
+              </div>
+            </template>
+            <div v-if="!ongoingActivities.length" class="db-map-empty">
+              <svg viewBox="0 0 24 24"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
+              Nessun operatore attivo
+            </div>
+            <div class="db-map-user-marker" v-if="ongoingCount > 0">
+              <div class="db-map-user-avatar">{{ userInitials }}</div>
+            </div>
+          </div>
+
+          <!-- Team list -->
+          <div class="db-team-list">
+            <div class="db-team-item" :class="{ 'is-active': ongoingCount > 0 }">
+              <div class="db-team-avatar" :class="{ 'is-live': ongoingCount > 0 }">{{ userInitials }}</div>
+              <div class="db-team-info">
+                <div class="db-team-name">{{ auth.currentUser.value?.displayName || auth.currentUser.value?.email || 'Utente' }}</div>
+                <div class="db-team-status" v-if="ongoingActivities.length">
+                  <span class="db-team-status-dot" :style="{ background: ACT[ongoingActivities[0].type]?.color }"></span>
+                  {{ ACT[ongoingActivities[0].type]?.label }} · {{ ongoingActivities[0].detail.slice(0, 20) }}
+                </div>
+                <div class="db-team-status db-team-status-idle" v-else>Nessuna attività</div>
+              </div>
+              <div class="db-team-elapsed" v-if="ongoingActivities.length">{{ elapsedDisplay }}</div>
+              <div class="db-team-elapsed db-team-elapsed-idle" v-else>—</div>
+            </div>
           </div>
         </div>
 
-        <!-- Activity feed -->
-        <div class="db-section">
-          <div class="db-section-head">
-            <span class="db-section-title">Attività recenti</span>
+        <!-- Attività recenti -->
+        <div class="db-panel-section">
+          <div class="db-panel-head">
+            <span class="db-panel-title">Attività recenti</span>
           </div>
-          <div v-if="!recentActivities.length" class="db-empty">Nessuna attività registrata</div>
+          <div v-if="!recentActivities.length" class="db-section-empty" style="padding: 20px 16px">
+            Nessuna attività registrata
+          </div>
           <div v-else class="db-feed">
             <div v-for="a in recentActivities" :key="a.id" class="db-feed-item">
               <div class="db-feed-avatar">{{ userInitials }}</div>
               <div class="db-feed-body">
                 <div class="db-feed-text">
-                  <span class="db-feed-type">{{ ACT[a.type]?.emoji }} {{ ACT[a.type]?.label }}</span>
-                  <span v-if="a.detail" class="db-feed-addr"> · {{ a.detail }}</span>
+                  <span class="db-feed-act" :style="{ color: ACT[a.type]?.color }">{{ ACT[a.type]?.emoji }} {{ ACT[a.type]?.label }}</span>
+                  <span v-if="a.detail" class="db-feed-detail"> · {{ a.detail.length > 24 ? a.detail.slice(0, 22) + '…' : a.detail }}</span>
                 </div>
-                <div class="db-feed-time">{{ fmtRelTime(a.startTime) }}</div>
+                <div class="db-feed-time">{{ fmtRelTime(a.startTime) }} · {{ fmtTime(a.startTime) }}</div>
               </div>
-              <span v-if="!a.endTime" class="db-live-badge">live</span>
+              <span v-if="!a.endTime" class="db-feed-live">live</span>
             </div>
           </div>
         </div>
 
-      </div><!-- /db-col-side -->
+        <!-- Week overview chart -->
+        <div class="db-panel-section">
+          <div class="db-panel-head">
+            <span class="db-panel-title">Ore per giorno</span>
+            <span class="db-section-sub">{{ statHours }} tot.</span>
+          </div>
+          <div class="db-mini-chart-wrap">
+            <canvas id="db-bar-chart-right" />
+          </div>
+        </div>
 
-    </div><!-- /db-grid -->
+      </div><!-- /db-right -->
 
-  </div>
+    </div><!-- /db-body -->
+
+  </div><!-- /view-dashboard -->
 </template>
 
 <style scoped lang="scss">
-// ── Top header ────────────────────────────────────────────────────────
-.db-top {
+// ── Reset view padding (override main.scss desktop) ───────────────────
+#view-dashboard {
+  padding: 0 !important;
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+// ── Topbar ────────────────────────────────────────────────────────────
+.db-topbar {
+  display: flex;
+  align-items: center;
   justify-content: space-between;
-  gap: 24px;
-  padding: 28px 28px 0;
+  gap: 20px;
+  padding: 20px 28px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--surface);
   flex-wrap: wrap;
 }
 
-.db-greeting {
-  min-width: 0;
-}
-
-.db-ws-label {
-  font-size: 12px;
+.db-topbar-meta {
+  font-size: 11px;
   font-weight: 500;
   color: var(--muted);
-  margin-bottom: 4px;
+  margin-bottom: 3px;
+  letter-spacing: .3px;
 }
 
-.db-title {
-  font-size: 24px;
+.db-topbar-title {
+  font-size: 22px;
   font-weight: 700;
   color: var(--ink);
   margin: 0 0 4px;
   line-height: 1.2;
 }
 
-.db-subtitle {
-  font-size: 13px;
+.db-topbar-sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
   color: var(--muted-2);
 }
 
-.db-top-actions {
+.db-topbar-sep { color: var(--border-strong); }
+
+.db-pulse-dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--live);
+  animation: db-pulse 1.5s ease-in-out infinite;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+
+@keyframes db-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: .6; transform: scale(.8); }
+}
+
+.db-topbar-right {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-shrink: 0;
 }
 
-.db-search {
+.db-search-wrap {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 14px;
-  background: var(--surface);
+  padding: 8px 12px;
+  background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  color: var(--muted);
-  font-size: 13px;
-  cursor: pointer;
+  min-width: 260px;
   transition: border-color .12s;
-
-  &:hover { border-color: var(--border-strong); }
+  &:focus-within { border-color: var(--border-strong); }
 
   svg {
     width: 14px; height: 14px;
-    stroke: currentColor; fill: none;
+    stroke: var(--muted); fill: none;
     stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
     flex-shrink: 0;
   }
-
   kbd {
-    margin-left: 8px;
-    padding: 1px 5px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--muted);
+    background: var(--surface-3);
+    border: 1px solid var(--border-strong);
     border-radius: 4px;
-    font-size: 11px;
+    padding: 1px 5px;
     font-family: var(--ff);
   }
 }
 
-.db-cta {
+.db-search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--ff);
+  font-size: 12px;
+  color: var(--ink);
+  &::placeholder { color: var(--muted); }
+}
+
+.db-new-btn {
   display: flex;
   align-items: center;
   gap: 7px;
   padding: 8px 16px;
-  background: var(--primary);
+  background: var(--live);
   border: none;
   border-radius: var(--radius-sm);
   font-family: var(--ff);
@@ -515,11 +805,10 @@ const todayShort = computed(() => {
   font-weight: 600;
   color: #fff;
   cursor: pointer;
+  white-space: nowrap;
   transition: filter .12s;
-
   &:hover  { filter: brightness(1.1); }
   &:active { filter: brightness(.9); }
-
   svg {
     width: 14px; height: 14px;
     stroke: currentColor; fill: none;
@@ -527,56 +816,98 @@ const todayShort = computed(() => {
   }
 }
 
-// ── Stat cards ────────────────────────────────────────────────────────
-.db-stats {
+// ── Body layout ───────────────────────────────────────────────────────
+.db-body {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.db-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+
+.db-right {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--surface);
+}
+
+// ── KPI Cards ─────────────────────────────────────────────────────────
+.db-kpis {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
-  padding: 20px 28px 0;
-
-  @media (max-width: 1100px) { grid-template-columns: repeat(2, 1fr); }
+  gap: 0;
+  border-bottom: 1px solid var(--border);
 }
 
-.db-stat {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 18px 20px;
-  transition: border-color .12s;
-
-  &:hover { border-color: var(--border-strong); }
+.db-kpi {
+  padding: 20px 22px;
+  border-right: 1px solid var(--border);
+  cursor: default;
+  transition: background .12s;
+  &:last-child { border-right: none; }
+  &:hover { background: var(--surface-2); }
 }
 
-.db-stat-label {
-  font-size: 11px;
+.db-kpi-label {
+  font-size: 10px;
   font-weight: 600;
   color: var(--muted);
   text-transform: uppercase;
-  letter-spacing: .6px;
-  margin-bottom: 8px;
+  letter-spacing: .7px;
+  margin-bottom: 10px;
 }
 
-.db-stat-val {
-  font-size: 36px;
+.db-kpi-val {
+  font-size: 34px;
   font-weight: 800;
   color: var(--ink);
   line-height: 1;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+  gap: 8px;
 
-  &.db-stat-mono { font-family: var(--ff-mono); font-size: 28px; }
+  &.db-kpi-mono { font-family: var(--ff-mono); font-size: 26px; }
 }
 
-.db-stat-sub {
+.db-kpi-live-dot {
+  display: inline-block;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--live);
+  animation: db-pulse 1.5s ease-in-out infinite;
+}
+
+.db-kpi-sub {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
   color: var(--muted);
 
-  &.db-stat-live { color: var(--live); font-weight: 600; }
+  svg {
+    width: 11px; height: 11px;
+    stroke: currentColor; fill: none;
+    stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  }
+
+  &.db-kpi-sub-live { color: var(--live); font-weight: 600; }
 }
 
 // ── Period tabs ───────────────────────────────────────────────────────
 .db-period-row {
-  padding: 16px 28px 0;
+  padding: 12px 22px;
+  border-bottom: 1px solid var(--border);
 }
 
 .db-period-tabs {
@@ -588,45 +919,25 @@ const todayShort = computed(() => {
   padding: 3px;
 
   button {
-    padding: 5px 12px;
+    padding: 4px 12px;
     border: none;
     background: transparent;
     border-radius: var(--radius-xs);
     font-family: var(--ff);
-    font-size: 12px;
+    font-size: 11px;
     font-weight: 500;
     color: var(--muted);
     cursor: pointer;
     transition: background .12s, color .12s;
-
     &:hover  { background: var(--surface-2); color: var(--ink); }
     &.active { background: var(--surface-3); color: var(--ink); font-weight: 600; }
   }
 }
 
-// ── Main grid ─────────────────────────────────────────────────────────
-.db-grid {
-  display: grid;
-  grid-template-columns: 1fr 360px;
-  gap: 16px;
-  padding: 16px 28px 28px;
-
-  @media (max-width: 1100px) { grid-template-columns: 1fr; }
-}
-
-.db-col-main,
-.db-col-side {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
 // ── Section ───────────────────────────────────────────────────────────
 .db-section {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  &:last-child { border-bottom: none; }
 }
 
 .db-section-head {
@@ -634,8 +945,14 @@ const todayShort = computed(() => {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 14px 18px;
+  padding: 14px 22px;
   border-bottom: 1px solid var(--border);
+}
+
+.db-section-head-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .db-section-title {
@@ -644,34 +961,76 @@ const todayShort = computed(() => {
   color: var(--ink);
 }
 
+.db-section-date-pill {
+  font-size: 11px;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  padding: 2px 9px;
+  border-radius: 20px;
+  font-weight: 500;
+}
+
 .db-section-sub {
   font-size: 11px;
   color: var(--muted);
 }
 
-.db-empty {
+.db-section-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 32px 20px;
+  padding: 28px 22px;
   color: var(--muted);
   font-size: 13px;
   text-align: center;
-
   svg {
-    width: 24px; height: 24px;
-    stroke: var(--muted); fill: none;
+    width: 20px; height: 20px;
+    stroke: currentColor; fill: none;
     stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
-    opacity: .5;
+    opacity: .4;
   }
 }
 
-// ── Live badge ────────────────────────────────────────────────────────
+.db-view-toggle {
+  display: inline-flex;
+  gap: 2px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  padding: 2px;
+
+  button {
+    padding: 4px 10px;
+    border: none;
+    background: transparent;
+    border-radius: 3px;
+    font-family: var(--ff);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--muted);
+    cursor: pointer;
+    &.active { background: var(--surface-3); color: var(--ink); font-weight: 600; }
+  }
+}
+
+.db-link-btn {
+  background: transparent;
+  border: none;
+  font-family: var(--ff);
+  font-size: 12px;
+  color: var(--primary-ink);
+  cursor: pointer;
+  padding: 3px 0;
+  &:hover { text-decoration: underline; }
+}
+
 .db-live-badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 7px;
+  gap: 5px;
+  padding: 2px 9px;
   background: var(--live-soft);
   color: var(--live);
   border-radius: 10px;
@@ -679,262 +1038,73 @@ const todayShort = computed(() => {
   font-weight: 700;
   letter-spacing: .5px;
   text-transform: uppercase;
-
-  &.db-live-badge-lg {
-    font-size: 11px;
-    padding: 3px 10px;
-  }
 }
 
-// ── Today list ────────────────────────────────────────────────────────
-.db-today-list {
-  padding: 8px 0;
-}
-
-.db-today-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 10px 18px;
-  transition: background .1s;
-
-  &:hover { background: var(--surface-2); }
-}
-
-.db-today-time {
-  font-family: var(--ff-mono);
-  font-size: 11px;
-  color: var(--muted);
-  min-width: 38px;
-  padding-top: 2px;
-  flex-shrink: 0;
-}
-
-.db-today-line {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0;
-  flex-shrink: 0;
-  padding-top: 4px;
-}
-
-.db-today-dot {
-  width: 8px;
-  height: 8px;
+.db-live-badge-dot {
+  width: 6px; height: 6px;
   border-radius: 50%;
-  background: var(--border-strong);
+  background: var(--live);
+  animation: db-pulse 1.5s ease-in-out infinite;
   flex-shrink: 0;
+}
 
-  &.live {
-    background: var(--live);
-    box-shadow: 0 0 0 2px var(--live-soft);
+// ── Timeline ──────────────────────────────────────────────────────────
+.db-timeline {
+  padding: 16px 22px 20px;
+}
+
+.db-tl-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  svg {
+    width: 20px; height: 20px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
+    opacity: .4;
   }
 }
 
-.db-today-track {
-  width: 1px;
-  flex: 1;
-  background: var(--border);
-  min-height: 20px;
-}
-
-.db-today-content {
-  flex: 1;
-  min-width: 0;
-}
-
-.db-today-type {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--ink);
-  margin-bottom: 2px;
-}
-
-.db-type-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.db-today-addr {
-  font-size: 11px;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.db-today-dur {
-  font-family: var(--ff-mono);
-  font-size: 12px;
-  color: var(--muted);
-  flex-shrink: 0;
-  padding-top: 2px;
-}
-
-// ── Ongoing cards ─────────────────────────────────────────────────────
-.db-ongoing-list {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  padding: 8px;
-}
-
-.db-ongoing-card {
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 14px 16px;
-  border-left: 3px solid var(--live);
-}
-
-.db-ongoing-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-
-.db-ongoing-id {
-  font-family: var(--ff-mono);
-  font-size: 11px;
-  color: var(--muted);
-  font-weight: 600;
-}
-
-.db-ongoing-status {
-  font-size: 11px;
-  font-weight: 700;
-  color: var(--live);
-  background: var(--live-soft);
-  padding: 2px 8px;
-  border-radius: 10px;
-}
-
-.db-ongoing-type {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--ink);
-  margin-bottom: 8px;
-}
-
-.db-ongoing-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-
-  span {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 11px;
-    color: var(--muted);
-
-    svg {
-      width: 12px; height: 12px;
-      stroke: currentColor; fill: none;
-      stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
-      flex-shrink: 0;
-    }
-  }
-}
-
-// ── Day rows ──────────────────────────────────────────────────────────
-.db-day-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 13px 18px;
-  border-bottom: 1px solid var(--border);
-  cursor: pointer;
-  transition: background .1s;
-
-  &:hover { background: var(--surface-2); }
-  &:last-child { border-bottom: none; }
-}
-
-.db-day-date {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--ink);
-  min-width: 80px;
-  flex-shrink: 0;
-}
-
-.db-day-body {
-  flex: 1;
-  min-width: 0;
-}
-
-.db-day-count {
-  font-size: 12px;
-  color: var(--muted);
+// Time axis labels (above track)
+.db-tl-axis {
+  position: relative;
+  height: 18px;
+  margin-left: 100px;
   margin-bottom: 4px;
 }
 
-.db-day-photos { color: var(--muted); }
-
-.db-day-types {
-  display: flex;
-  gap: 5px;
-  flex-wrap: wrap;
-}
-
-.type-pill {
+.db-tl-hour {
+  position: absolute;
+  transform: translateX(-50%);
   font-size: 10px;
-  font-weight: 700;
-  padding: 2px 8px;
-  border-radius: 20px;
-  letter-spacing: .3px;
-}
-
-.db-day-time {
-  font-family: var(--ff-mono);
-  font-size: 13px;
   font-weight: 600;
-  color: var(--muted-2);
-  flex-shrink: 0;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 
-.db-day-arrow {
-  width: 16px; height: 16px;
-  stroke: var(--muted); fill: none;
-  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
-  flex-shrink: 0;
-}
-
-// ── Chart ─────────────────────────────────────────────────────────────
-.db-chart-wrap {
-  height: 180px;
-  padding: 16px 18px 18px;
-}
-
-// ── Activity feed ─────────────────────────────────────────────────────
-.db-feed {
-  display: flex;
-  flex-direction: column;
-}
-
-.db-feed-item {
+// Row: avatar label + track
+.db-tl-track-wrap {
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 18px;
-  border-bottom: 1px solid var(--border);
-  transition: background .1s;
-
-  &:hover { background: var(--surface-2); }
-  &:last-child { border-bottom: none; }
+  gap: 0;
+  height: 44px;
 }
 
-.db-feed-avatar {
-  width: 28px;
-  height: 28px;
+.db-tl-who {
+  flex: 0 0 100px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-right: 10px;
+}
+
+.db-tl-avatar {
+  width: 26px; height: 26px;
   border-radius: 50%;
   background: var(--primary-soft);
   color: var(--primary-ink);
@@ -946,25 +1116,517 @@ const todayShort = computed(() => {
   flex-shrink: 0;
 }
 
-.db-feed-body {
-  flex: 1;
-  min-width: 0;
+.db-tl-name {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.db-feed-text {
-  font-size: 12px;
+.db-tl-track {
+  flex: 1;
+  height: 36px;
+  position: relative;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.db-tl-grid {
+  position: absolute;
+  inset: 0;
+}
+
+.db-tl-gridline {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+  transform: translateX(-50%);
+}
+
+.db-tl-block {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  cursor: default;
+  min-width: 20px;
+  overflow: hidden;
+  transition: filter .1s;
+
+  &:hover   { filter: brightness(1.15); z-index: 2; }
+  &.is-live { box-shadow: 0 0 0 1px var(--live); }
+}
+
+.db-tl-block-label {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255,255,255,.9);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-tl-block-code {
+  font-family: var(--ff-mono);
+  font-size: 9px;
+  opacity: .8;
+  margin-right: 4px;
+}
+
+.db-tl-now {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--live);
+  transform: translateX(-50%);
+  z-index: 3;
+}
+
+.db-tl-now-dot {
+  position: absolute;
+  top: -3px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--live);
+}
+
+// Today's work orders chips below track
+.db-tl-orders {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 10px;
+  margin-left: 100px;
+}
+
+.db-tl-order-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-xs);
+  font-size: 11px;
   color: var(--ink-2);
+  cursor: default;
+}
+
+.db-tl-order-code {
+  font-family: var(--ff-mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+// Chart view (settimana)
+.db-chart-view { padding: 16px 22px 20px; }
+.db-chart-wrap { height: 160px; }
+.db-mini-chart-wrap { height: 120px; padding: 0 16px 16px; }
+
+// Transition
+.fade-enter-active, .fade-leave-active { transition: opacity .15s; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+
+// ── Job cards ─────────────────────────────────────────────────────────
+.db-jobs {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 10px;
+}
+
+.db-job-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  border-left: 3px solid var(--live);
+  transition: border-color .12s, background .12s;
+  &:hover { background: var(--surface-3); }
+}
+
+.db-job-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.db-job-id-wrap {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.db-job-code {
+  font-family: var(--ff-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.db-job-type-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 10px;
+}
+
+.db-job-status-live {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--live);
+}
+
+.db-job-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-job-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 10px;
+
+  span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  svg {
+    width: 11px; height: 11px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  }
+}
+
+.db-job-progress-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.db-job-progress-bar {
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.db-job-progress-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width .3s;
+}
+
+.db-job-progress-label {
+  font-family: var(--ff-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted-2);
+  flex-shrink: 0;
+  min-width: 32px;
+  text-align: right;
+}
+
+// ── Day rows ──────────────────────────────────────────────────────────
+.db-day-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 22px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  transition: background .1s;
+  &:hover { background: var(--surface-2); }
+  &:last-child { border-bottom: none; }
+}
+
+.db-day-date  { font-size: 12px; font-weight: 700; color: var(--ink); min-width: 80px; flex-shrink: 0; }
+.db-day-body  { flex: 1; min-width: 0; }
+.db-day-count { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+
+.db-day-types { display: flex; gap: 4px; flex-wrap: wrap; }
+
+.db-type-pill {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 10px;
+  letter-spacing: .3px;
+}
+
+.db-day-time  {
+  font-family: var(--ff-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-2);
+  flex-shrink: 0;
+}
+
+.db-day-arrow {
+  width: 14px; height: 14px;
+  stroke: var(--muted); fill: none;
+  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  flex-shrink: 0;
+}
+
+// ── Right panel ───────────────────────────────────────────────────────
+.db-panel-section {
+  border-bottom: 1px solid var(--border);
+  &:last-child { border-bottom: none; }
+}
+
+.db-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.db-panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+// ── Map placeholder ───────────────────────────────────────────────────
+.db-map-placeholder {
+  position: relative;
+  height: 140px;
+  background: #0D1117;
+  overflow: hidden;
+}
+
+.db-map-grid {
+  position: absolute;
+  inset: 0;
+  background-image:
+    repeating-linear-gradient(0deg, rgba(255,255,255,.03) 0, rgba(255,255,255,.03) 1px, transparent 1px, transparent 24px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.03) 0, rgba(255,255,255,.03) 1px, transparent 1px, transparent 24px);
+}
+
+.db-map-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  svg {
+    width: 18px; height: 18px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round;
+    opacity: .5;
+  }
+}
+
+.db-map-marker {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+}
+
+.db-map-marker-dot {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 3px rgba(255,255,255,.15);
+}
+
+.db-map-marker-label {
+  font-family: var(--ff-mono);
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  background: rgba(0,0,0,.6);
+  padding: 1px 4px;
+  border-radius: 3px;
+  white-space: nowrap;
+}
+
+.db-map-user-marker {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+}
+
+.db-map-user-avatar {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--live);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid rgba(255,255,255,.3);
+  box-shadow: 0 0 0 3px var(--live-soft);
+}
+
+// ── Team list ─────────────────────────────────────────────────────────
+.db-team-list { padding: 8px 0; }
+
+.db-team-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  transition: background .1s;
+  &:hover { background: var(--surface-2); }
+  &.is-active .db-team-avatar { border-color: var(--live); }
+}
+
+.db-team-avatar {
+  width: 30px; height: 30px;
+  border-radius: 50%;
+  background: var(--primary-soft);
+  color: var(--primary-ink);
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 2px solid transparent;
+  transition: border-color .12s;
+
+  &.is-live { border-color: var(--live); }
+}
+
+.db-team-info { flex: 1; min-width: 0; }
+
+.db-team-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   margin-bottom: 2px;
 }
 
-.db-feed-type { font-weight: 600; color: var(--ink); }
-.db-feed-addr { color: var(--muted); }
-
-.db-feed-time {
+.db-team-status {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   font-size: 11px;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+
+  &.db-team-status-idle { color: var(--muted); }
+}
+
+.db-team-status-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.db-team-elapsed {
+  font-family: var(--ff-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-2);
+  flex-shrink: 0;
+
+  &.db-team-elapsed-idle { color: var(--muted); }
+}
+
+// ── Activity feed ─────────────────────────────────────────────────────
+.db-feed { display: flex; flex-direction: column; }
+
+.db-feed-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  transition: background .1s;
+  &:hover { background: var(--surface-2); }
+  &:last-child { border-bottom: none; }
+}
+
+.db-feed-avatar {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: var(--primary-soft);
+  color: var(--primary-ink);
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.db-feed-body { flex: 1; min-width: 0; }
+
+.db-feed-text {
+  font-size: 11px;
+  color: var(--ink-2);
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.db-feed-act { font-weight: 600; }
+.db-feed-detail { color: var(--muted); }
+
+.db-feed-time {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.db-feed-live {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  background: var(--live-soft);
+  color: var(--live);
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 700;
+  flex-shrink: 0;
 }
 </style>
