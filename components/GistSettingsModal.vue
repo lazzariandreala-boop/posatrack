@@ -89,26 +89,15 @@ async function saveAndTest(): Promise<void> {
 
   if (data !== null) {
     feedback.value = { ok: true, msg: 'Connessione riuscita! Configurazione salvata.' }
-    // Avvia la sync iniziale per allineare i dati
-    await store.initSync()
   } else {
     feedback.value = { ok: false, msg: `Connessione fallita: ${gistSync.syncError.value}` }
     gistSync.clearConfig()
   }
 }
 
-/** Forza un push immediato dei dati locali sul Gist. */
-async function syncNow(): Promise<void> {
-  isWorking.value  = true
-  workingMsg.value = 'Sincronizzazione in corso…'
-  feedback.value   = null
-  await store.initSync()
-  isWorking.value = false
-  if (gistSync.syncStatus.value === 'ok') {
-    feedback.value = { ok: true, msg: 'Sincronizzazione completata.' }
-  } else {
-    feedback.value = { ok: false, msg: `Errore: ${gistSync.syncError.value}` }
-  }
+/** Placeholder – la sync ora è automatica via Firestore. */
+function syncNow(): void {
+  feedback.value = { ok: true, msg: 'Sincronizzazione live attiva.' }
 }
 
 /** Rimuove la configurazione Gist (torna a offline). */

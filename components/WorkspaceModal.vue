@@ -319,7 +319,7 @@ function close(): void {
 
 .ws-modal {
   background: var(--surface);
-  border: 1px solid var(--border2);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r);
   width: 100%;
   max-width: 500px;
@@ -345,7 +345,7 @@ function close(): void {
   gap: 10px;
   font-size: 15px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--ink);
 }
 
 .ws-icon {
@@ -358,10 +358,10 @@ function close(): void {
   width: 32px; height: 32px;
   border: none; background: transparent; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  border-radius: var(--r-sm); color: var(--muted);
+  border-radius: var(--radius-sm); color: var(--muted);
   transition: background .12s, color .12s;
 
-  &:hover { background: var(--surface2); color: var(--text); }
+  &:hover { background: var(--surface-2); color: var(--ink); }
 
   svg {
     width: 16px; height: 16px;
@@ -402,7 +402,7 @@ function close(): void {
   line-height: 1.5;
   margin: 0;
 
-  strong { color: var(--text); }
+  strong { color: var(--ink); }
 }
 
 // ── Workspace name badge ─────────────────────────────────────────────
@@ -410,18 +410,18 @@ function close(): void {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--surface2);
-  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
   padding: 10px 14px;
   font-size: 15px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--ink);
 }
 
 .ws-owner-badge {
   font-size: 10px;
   background: rgba(255,95,0,.15);
-  color: var(--orange);
+  color: var(--live);
   padding: 2px 7px;
   border-radius: 10px;
   font-weight: 500;
@@ -440,15 +440,15 @@ function close(): void {
   align-items: center;
   gap: 10px;
   padding: 8px 12px;
-  background: var(--surface2);
-  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
 }
 
 .ws-member-avatar {
   width: 30px; height: 30px;
   border-radius: 50%;
   background: rgba(255,95,0,.2);
-  color: var(--orange);
+  color: var(--live);
   font-size: 13px;
   font-weight: 700;
   display: flex;
@@ -459,7 +459,7 @@ function close(): void {
 
 .ws-member-email {
   font-size: 13px;
-  color: var(--text);
+  color: var(--ink);
   flex: 1;
   word-break: break-all;
 }
@@ -467,7 +467,7 @@ function close(): void {
 .ws-role-badge {
   font-size: 10px;
   color: var(--muted);
-  background: var(--surface3);
+  background: var(--surface-3);
   padding: 2px 6px;
   border-radius: 4px;
 }
@@ -475,7 +475,7 @@ function close(): void {
 .ws-remove-btn {
   background: none;
   border: none;
-  color: var(--red);
+  color: var(--err);
   cursor: pointer;
   padding: 2px 6px;
   font-size: 12px;
@@ -495,9 +495,9 @@ function close(): void {
 .ws-pending-item {
   font-size: 12px;
   color: var(--muted);
-  background: var(--surface2);
+  background: var(--surface-2);
   padding: 7px 12px;
-  border-radius: var(--r-sm);
+  border-radius: var(--radius-sm);
 }
 
 // ── Invite form ──────────────────────────────────────────────────────
@@ -512,7 +512,7 @@ function close(): void {
 
 .ws-invite-hint {
   font-size: 11px;
-  color: var(--dim);
+  color: var(--muted);
   line-height: 1.5;
   margin: 0;
 }
@@ -525,28 +525,28 @@ function close(): void {
 
 .ws-input {
   width: 100%;
-  background: var(--surface2);
-  border: 1px solid var(--border2);
-  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   padding: 10px 12px;
   font-size: 13px;
-  color: var(--text);
-  font-family: 'DM Sans', sans-serif;
+  color: var(--ink);
+  font-family: var(--ff);
   outline: none;
   transition: border-color .15s;
 
-  &:focus { border-color: var(--orange); }
+  &:focus { border-color: var(--live); }
   &:disabled { opacity: .5; }
-  &::placeholder { color: var(--dim); }
+  &::placeholder { color: var(--muted); }
 }
 
 // ── Buttons ─────────────────────────────────────────────────────────
 .ws-btn {
   padding: 10px 16px;
-  border-radius: var(--r-sm);
+  border-radius: var(--radius-sm);
   font-size: 14px;
   font-weight: 500;
-  font-family: 'DM Sans', sans-serif;
+  font-family: var(--ff);
   cursor: pointer;
   border: none;
   white-space: nowrap;
@@ -556,14 +556,14 @@ function close(): void {
 }
 
 .ws-btn-primary {
-  background: var(--orange);
+  background: var(--live);
   color: #fff;
   &:not(:disabled):hover { background: var(--orange-d); }
 }
 
 .ws-btn-danger {
   background: rgba(239,68,68,.12);
-  color: var(--red);
+  color: var(--err);
   border: 1px solid rgba(239,68,68,.25);
   &:not(:disabled):hover { background: rgba(239,68,68,.2); }
 }
@@ -571,12 +571,12 @@ function close(): void {
 // ── Feedback ─────────────────────────────────────────────────────────
 .ws-feedback {
   padding: 9px 12px;
-  border-radius: var(--r-sm);
+  border-radius: var(--radius-sm);
   font-size: 13px;
   line-height: 1.4;
 
-  &.ok  { background: rgba(34,197,94,.1);  color: var(--green); }
-  &.err { background: rgba(239,68,68,.1);  color: var(--red);   }
+  &.ok  { background: rgba(34,197,94,.1);  color: var(--ok); }
+  &.err { background: rgba(239,68,68,.1);  color: var(--err);   }
 }
 
 // ── Loading ──────────────────────────────────────────────────────────
@@ -585,14 +585,14 @@ function close(): void {
   align-items: center;
   gap: 8px;
   font-size: 13px;
-  color: var(--orange);
+  color: var(--live);
 }
 
 .ws-spinner {
   display: inline-block;
   width: 14px; height: 14px;
   border: 2px solid rgba(255,95,0,.3);
-  border-top-color: var(--orange);
+  border-top-color: var(--live);
   border-radius: 50%;
   animation: spin .7s linear infinite;
 }

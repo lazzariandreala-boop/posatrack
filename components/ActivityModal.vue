@@ -385,7 +385,7 @@ defineExpose({ startActivity, doStop })
 #modal-sheet {
   background: var(--surface);
   border-radius: 22px 22px 0 0;
-  border-top: 1px solid var(--border2);
+  border-top: 1px solid var(--border-strong);
   padding: 0 20px calc(28px + var(--safe-b));
   width: 100%;
   max-width: 900px;
@@ -398,14 +398,14 @@ defineExpose({ startActivity, doStop })
 .modal-handle {
   width: 40px;
   height: 4px;
-  background: var(--border2);
+  background: var(--border-strong);
   border-radius: 2px;
   margin: 14px auto 22px;
 }
 
 /* Titolo dinamico del modal */
 .modal-title {
-  font-family: 'Barlow Condensed', sans-serif;
+  font-family: var(--ff);
   font-size: 26px;
   font-weight: 900;
   text-transform: uppercase;
@@ -440,7 +440,7 @@ defineExpose({ startActivity, doStop })
     height: 100%;
     object-fit: cover;
     border-radius: 9px;
-    border: 2px solid var(--border2);
+    border: 2px solid var(--border-strong);
   }
 }
 
@@ -451,7 +451,7 @@ defineExpose({ startActivity, doStop })
   right: -5px;
   width: 20px;
   height: 20px;
-  background: var(--red);
+  background: var(--err);
   border-radius: 50%;
   display: flex;
   align-items: center;
@@ -471,9 +471,9 @@ defineExpose({ startActivity, doStop })
   padding: 14px 0;
   width: 100%;
   justify-content: center;
-  background: var(--surface3);
-  border: 1px solid var(--border2);
-  border-radius: var(--r-xs);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
   font-size: 11px;
   font-weight: 600;
   color: var(--muted);
@@ -481,7 +481,7 @@ defineExpose({ startActivity, doStop })
   margin-top: 8px;
   transition: color .12s, border-color .12s;
 
-  &:hover { color: var(--text); border-color: var(--orange); }
+  &:hover { color: var(--ink); border-color: var(--live); }
 
   svg {
     width: 12px;
@@ -497,7 +497,7 @@ defineExpose({ startActivity, doStop })
 /* Messaggio di errore sotto un campo */
 .field-error {
   font-size: 11px;
-  color: var(--red);
+  color: var(--err);
   margin-top: 5px;
   font-weight: 600;
 }

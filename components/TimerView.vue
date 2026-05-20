@@ -16,6 +16,7 @@
  */
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useAppState } from '~/composables/useAppState'
+import { useAuth } from '~/composables/useAuth'
 import { useStore } from '~/composables/useStore'
 import { useGeo } from '~/composables/useGeo'
 import { useTimer } from '~/composables/useTimer'
@@ -447,412 +448,344 @@ onUnmounted(() => {
 
 const current = computed(() => appState.currentActivity.value)
 const isRunning = computed(() => current.value !== null)
-const actColor = computed(() => current.value ? (ACT[current.value.type]?.color ?? 'var(--orange)') : 'var(--dim)')
-const actLabel = computed(() => current.value ? (ACT[current.value.type]?.label ?? current.value.type).toUpperCase() : 'NESSUNA ATTIVITÀ')
-const actDetail = computed(() => current.value?.detail ?? 'In attesa di avvio...')
+const actColor = computed(() => current.value ? (ACT[current.value.type]?.color ?? 'var(--live)') : 'var(--muted)')
+const actLabel = computed(() => current.value ? (ACT[current.value.type]?.label ?? current.value.type) : 'In attesa di avvio')
+const actDetail = computed(() => current.value?.detail ?? '')
 const gpsOk = computed(() => current.value?.startLoc != null)
-const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startLoc) : 'Posizione non disponibile')
+const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startLoc) : '')
+
+// ── Timer split per display live (HH:MM + :SS separati per colorazione) ──────
+const timerHM = computed(() => {
+  const parts = (timer.elapsed.value || '00:00:00').split(':')
+  return parts.slice(0, 2).join(':')
+})
+const timerSec = computed(() => {
+  const parts = (timer.elapsed.value || '00:00:00').split(':')
+  return ':' + (parts[2] || '00')
+})
+
+// ── Prossimo cantiere: prima attività pianificata non avviata ─────────────────
+const nextPlanned = computed(() => plannedTodayActivities.value[0] ?? null)
+
+// ── Tutte le attività di oggi per la schedule ─────────────────────────────────
+const scheduleItems = computed(() => {
+  const planned = plannedTodayActivities.value.map((a, i) => ({ ...a, idx: i + 1, done: false }))
+  const done    = todayActivities.value.map(a => ({ ...a, idx: 0, done: true }))
+  return [...done, ...planned].slice(0, 5)
+})
+
+// ── Numero foto dell'attività corrente ────────────────────────────────────────
+const currentPhotoCount = computed(() => current.value?.photos?.length ?? 0)
+
+// ── Auth per il nome utente ───────────────────────────────────────────────────
+const auth = useAuth()
+const userName = computed(() => {
+  const name = auth.currentUser.value?.displayName || auth.currentUser.value?.email || ''
+  return name.split(' ')[0] || 'Ciao'
+})
+const userInitials = computed(() => {
+  const name = auth.currentUser.value?.displayName || auth.currentUser.value?.email || 'U'
+  return name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
+})
 </script>
 
 <template>
-  <div class="view" id="view-timer">
+  <div id="view-timer">
 
-    <!-- ── Header: giorno, data e orologio live ──────────────────────── -->
-    <div class="page-header">
-      <div>
-        <div class="hdr-day">{{ clockDay }}</div>
-        <div class="page-title">{{ clockDate }}</div>
+    <!-- ════════════════════════════════════════════════════════════
+         MOBILE: SESSIONE LIVE (quando c'è un'attività in corso)
+         ════════════════════════════════════════════════════════════ -->
+    <div v-if="isRunning" class="live-view">
+
+      <!-- Header arancione -->
+      <div class="live-header">
+        <div class="live-header-left">
+          <span class="live-dot-indicator" />
+          <span class="live-header-label">SESSIONE LIVE</span>
+        </div>
+        <div class="live-header-right">
+          {{ actLabel }} · {{ actDetail }}
+        </div>
       </div>
 
-      <!-- Logo Pozza al centro -->
-      <img src="../Logo.png" alt="Pozza Logo" width="125" height="100" />
+      <!-- Sezione timer -->
+      <div class="live-timer-section">
+        <div class="live-timer-label">IN CORSO DA</div>
+        <div class="live-timer-display">
+          <span class="live-timer-hm">{{ timerHM }}</span><span class="live-timer-sec">{{ timerSec }}</span>
+        </div>
+        <div class="live-timer-meta">
+          Avvio · {{ fmtTime(current!.startTime) }}
+          <template v-if="gpsOk"> · GPS {{ gpsText }}</template>
+        </div>
+        <div class="live-progress-bar">
+          <div class="live-progress-fill" style="width: 0%" />
+        </div>
+      </div>
 
-      <!-- Orologio HH:MM -->
-      <div class="hdr-time">{{ clockTime }}</div>
-    </div>
-
-    <!--
-      Wrapper colonne desktop.
-      Su mobile i figli si impilano verticalmente.
-      Su desktop ≥800px diventano flex row (regola in main.scss).
-    -->
-    <div id="timer-cols">
-
-      <!-- ── Colonna sinistra: card + stop ─────────────────────────── -->
-      <div id="timer-left-col">
-
-        <!-- Card attività in corso -->
-        <div id="active-card" :class="{ running: isRunning }">
-          <!-- Barra colorata in cima -->
-          <div id="active-card-bar" :style="{ background: actColor }" />
-
-          <!-- Badge tipo: "● POSA" ecc. -->
-          <div id="ac-badge">
-            <div id="ac-badge-dot" :style="{ background: actColor }" />
-            <span>{{ actLabel }}</span>
+      <!-- Card job in corso -->
+      <div class="live-job-card">
+        <div class="live-job-header">
+          <div class="live-job-badge">
+            <span class="live-dot-sm" />
+            In corso
           </div>
+          <span v-if="current?.orderNumber" class="live-job-code">{{ current.orderNumber }}</span>
+        </div>
+        <div class="live-job-name">{{ actDetail || 'Attività in corso' }}</div>
+        <div v-if="gpsOk" class="live-job-loc">
+          <svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+          {{ gpsText }}
+          <span class="live-geofence-ok">
+            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+            GPS ok
+          </span>
+        </div>
+      </div>
 
-          <!-- Nome/dettaglio dell'attività corrente -->
-          <div id="ac-name" :class="{ running: isRunning }">{{ actDetail }}</div>
+      <!-- Griglia azioni 2×2 -->
+      <div class="live-action-grid">
+        <button class="live-action-btn" @click="current && triggerPhotoCapture(current.id)">
+          <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          <span class="live-action-label">Foto</span>
+          <span v-if="currentPhotoCount > 0" class="live-action-count">{{ currentPhotoCount }} caricate</span>
+          <span v-else class="live-action-count">aggiungi</span>
+        </button>
+        <button class="live-action-btn" @click="current && triggerReceiptCapture(current.id)">
+          <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/></svg>
+          <span class="live-action-label">Nota</span>
+          <span class="live-action-count">1 oggi</span>
+        </button>
+        <button class="live-action-btn" @click="triggerSitePhoto">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          <span class="live-action-label">Costo</span>
+          <span class="live-action-count">+ materiale</span>
+        </button>
+        <button class="live-action-btn live-action-warn">
+          <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          <span class="live-action-label">Anomalia</span>
+          <span class="live-action-count">segnala</span>
+        </button>
+      </div>
 
-          <!-- Numero ordine (solo per posa) -->
-          <div v-if="current?.orderNumber" id="ac-order">
-            <svg viewBox="0 0 24 24">
-              <rect x="3" y="4" width="18" height="18" rx="2" />
-              <path d="M16 2v4M8 2v4M3 10h18" />
-            </svg>
-            Ordine: <strong>{{ current.orderNumber }}</strong>
+      <!-- Log foto -->
+      <div v-if="current?.photos?.length" class="live-photos-row">
+        <div v-for="(p, i) in current!.photos.slice(0,4)" :key="i" class="live-photo-thumb" @click="openLightbox(current!.id, i)">
+          <img :src="photoSrc(p)" :alt="`Foto ${i+1}`" />
+        </div>
+        <div v-if="(current?.photos?.length ?? 0) > 4" class="live-photo-more">+{{ (current?.photos?.length ?? 0) - 4 }}</div>
+      </div>
+
+      <!-- Note cantiere -->
+      <div class="live-notes-section">
+        <div class="live-section-label">NOTE DI CANTIERE</div>
+        <textarea v-model="dayNote" class="live-notes-area" placeholder="Note sul cantiere..." rows="3" @blur="saveDayNote" />
+      </div>
+
+      <!-- Pulsante TERMINA -->
+      <div class="live-stop-row">
+        <button class="live-stop-btn" @click="stopActivity">
+          <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+          Termina attività
+        </button>
+      </div>
+
+    </div><!-- /live-view -->
+
+
+    <!-- ════════════════════════════════════════════════════════════
+         MOBILE: HOME IDLE (nessuna sessione in corso)
+         ════════════════════════════════════════════════════════════ -->
+    <div v-else class="oggi-view">
+
+      <!-- Header -->
+      <div class="oggi-header">
+        <div class="oggi-header-left">
+          <div class="oggi-date">{{ clockDay }}, {{ clockDate }}</div>
+          <div class="oggi-greeting">Ciao, {{ userName }}</div>
+        </div>
+        <div class="avatar avatar-lg">{{ userInitials }}</div>
+      </div>
+
+      <!-- Status chips -->
+      <div class="oggi-status-row">
+        <div class="oggi-chip oggi-chip-idle">
+          <span class="oggi-chip-dot" />
+          In attesa di avvio
+        </div>
+        <div class="oggi-chip oggi-chip-gps">
+          GPS pronto
+        </div>
+      </div>
+
+      <!-- Timer display -->
+      <div class="oggi-timer-display">00:00:00</div>
+      <div class="oggi-timer-hint">Inizia una sessione per iniziare a tracciare</div>
+
+      <!-- CTA principale: Avvia trasferimento -->
+      <button class="oggi-btn-primary" @click="openModal('trasferimento')">
+        <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/></svg>
+        Avvia trasferimento
+      </button>
+
+      <!-- Azioni secondarie: Posa + Pausa -->
+      <div class="oggi-btn-row">
+        <button class="oggi-btn-secondary" @click="openModal('posa')">
+          <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+          Posa
+        </button>
+        <button class="oggi-btn-secondary" @click="startDirectActivity('pausa_pranzo', 'Pausa pranzo', '')">
+          <svg viewBox="0 0 24 24"><path d="M18 8h1a4 4 0 010 8h-1M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8zM6 1v3M10 1v3M14 1v3"/></svg>
+          Pausa
+        </button>
+        <button class="oggi-btn-secondary" @click="openModal('altro')">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+          Altro
+        </button>
+      </div>
+
+      <!-- Prossimo cantiere (se ci sono attività pianificate) -->
+      <div v-if="nextPlanned" class="oggi-section">
+        <div class="oggi-section-label">PROSSIMO CANTIERE</div>
+        <div class="oggi-job-card">
+          <div class="oggi-job-header">
+            <div class="oggi-job-badges">
+              <span class="badge badge-primary">Assegnato</span>
+            </div>
+            <span class="oggi-job-code">{{ nextPlanned.orderNumber || '—' }}</span>
           </div>
-
-          <!-- Cronometro digitale live -->
-          <div id="timer-el" :class="{ running: isRunning }" :style="isRunning ? { color: actColor } : {}">
-            {{ timer.elapsed.value }}
+          <div class="oggi-job-name">{{ nextPlanned.detail }}</div>
+          <div class="oggi-job-meta">
+            <span>
+              <svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              {{ ACT[nextPlanned.type]?.label ?? nextPlanned.type }}
+            </span>
+            <template v-if="nextPlanned.workOrderId && woEstimatedTimeMap.get(nextPlanned.workOrderId)">
+              <span>
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                stima {{ fmtEstimated(woEstimatedTimeMap.get(nextPlanned.workOrderId)!) }}
+              </span>
+            </template>
           </div>
-
-          <!-- Riga GPS: pallino di stato + coordinate -->
-          <div id="ac-loc-row">
-            <div id="ac-loc-dot" :class="{ 'gps-ok': isRunning && gpsOk, 'gps-err': isRunning && !gpsOk }"
-              :style="{ background: isRunning ? (gpsOk ? 'var(--green)' : 'var(--red)') : 'var(--dim)' }" />
-            <span>{{ gpsText }}</span>
+          <div class="oggi-job-actions">
+            <button class="oggi-job-btn-ghost" @click="deleteActivity(nextPlanned.id)">Rimuovi</button>
+            <button class="oggi-job-btn-primary" @click="startPlannedActivity(nextPlanned)">
+              <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/></svg>
+              Avvia
+            </button>
           </div>
-        </div><!-- /active-card -->
+        </div>
+      </div>
 
-        <!-- Pulsante TERMINA: visibile solo quando c'è un'attività in corso -->
-        <div v-if="isRunning" id="stop-wrap">
-          <button class="btn btn-danger" @click="stopActivity">
-            <svg viewBox="0 0 24 24" style="width:18px;height:18px;flex-shrink:0" fill="currentColor" stroke="none">
-              <rect x="4" y="4" width="16" height="16" rx="2" />
-            </svg>
-            TERMINA ATTIVITÀ
+      <!-- Schedule oggi -->
+      <div v-if="todayActivities.length || plannedTodayActivities.length" class="oggi-section">
+        <div class="oggi-section-header">
+          <div class="oggi-section-label">OGGI · {{ todayActivities.length + plannedTodayActivities.length }} ATTIVITÀ</div>
+          <div class="oggi-section-dur">
+            {{ todayActivities.reduce((s, a) => s + (a.duration ?? 0), 0) > 0
+              ? fmtDur(todayActivities.reduce((s, a) => s + (a.duration ?? 0), 0))
+              : '' }}
+          </div>
+        </div>
+
+        <!-- Attività completate -->
+        <div v-for="(a, i) in todayActivities" :key="a.id" class="oggi-schedule-item">
+          <div class="oggi-sched-marker done">
+            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+          </div>
+          <div class="oggi-sched-body">
+            <div class="oggi-sched-time">{{ fmtTime(a.startTime) }}</div>
+            <div class="oggi-sched-name">{{ a.detail }}</div>
+            <div class="oggi-sched-sub">{{ ACT[a.type]?.label ?? a.type }}
+              <template v-if="a.duration"> · {{ fmtDur(a.duration) }}</template>
+            </div>
+          </div>
+          <div class="oggi-sched-actions">
+            <button class="sched-action-btn" @click="triggerPhotoCapture(a.id)">
+              <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            </button>
+            <button class="sched-action-btn sched-delete" @click="deleteActivity(a.id)">
+              <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Attività pianificate -->
+        <div v-for="(a, i) in plannedTodayActivities" :key="a.id" class="oggi-schedule-item oggi-sched-planned">
+          <div class="oggi-sched-marker planned">{{ todayActivities.length + i + 1 }}</div>
+          <div class="oggi-sched-body">
+            <div class="oggi-sched-name">{{ a.detail }}</div>
+            <div class="oggi-sched-sub">{{ ACT[a.type]?.label ?? a.type }}
+              <template v-if="a.workOrderId && woEstimatedTimeMap.get(a.workOrderId)">
+                · {{ fmtEstimated(woEstimatedTimeMap.get(a.workOrderId)!) }}
+              </template>
+            </div>
+          </div>
+          <button class="sched-start-btn" @click="startPlannedActivity(a)">
+            <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/></svg>
           </button>
         </div>
+      </div>
 
-        <!-- Foto di cantiere (mobile: pulsante rapido, desktop: card completa) -->
-        <div class="site-photos-section">
-          <div class="slabel">FOTO CANTIERE</div>
-          <div v-if="sitePhotos.length" class="site-photos-grid">
-            <div v-for="(p, i) in sitePhotos" :key="i" class="site-photo-wrap">
-              <img class="site-photo-thumb" :src="photoSrc(p)" :alt="`Cantiere ${i + 1}`" @click="openSiteLightbox(i)">
-              <button class="site-photo-del" @click="deleteSitePhoto(i)">✕</button>
-            </div>
+      <!-- Empty state quando non ci sono attività -->
+      <div v-if="!todayActivities.length && !plannedTodayActivities.length" class="oggi-empty">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <div class="oggi-empty-title">Giornata libera</div>
+        <div class="oggi-empty-sub">Nessuna attività pianificata per oggi</div>
+      </div>
+
+      <!-- Costi (collassati in fondo) -->
+      <div class="oggi-section">
+        <div class="oggi-section-label">COSTI EFFETTIVI GIORNATA</div>
+        <div class="oggi-costs-card">
+          <div class="oggi-cost-row">
+            <span class="oggi-cost-label">Viaggio €</span>
+            <input v-model.number="travelCostInput" type="number" min="0" step="0.01" placeholder="0" class="oggi-cost-input" />
+            <button class="oggi-cost-save" @click="saveTravelCostDay">Salva</button>
           </div>
-          <button class="photo-btn site-photo-btn" @click="triggerSitePhoto">
-            <svg viewBox="0 0 24 24">
-              <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
-              <circle cx="12" cy="13" r="4" />
-            </svg>
-            Scatta foto al cantiere
-          </button>
-        </div>
-
-        <!-- Note di cantiere giornaliere -->
-        <div class="day-notes-section">
-          <div class="slabel">NOTE DI CANTIERE</div>
-          <textarea v-model="dayNote" class="day-notes-area" placeholder="Inserisci note sul cantiere di oggi..."
-            rows="4" @blur="saveDayNote" />
-        </div>
-
-        <!-- Costi effettivi (solo se ci sono WO trasferimento o pause pranzo completate) -->
-        <div class="costs-section">
-          <div class="slabel">COSTI EFFETTIVI</div>
-
-          <!-- Viaggio: un campo per ogni WO trasferimento (può esserci più di una destinazione) -->
-          <!-- <div v-for="wo in transferWOs" :key="wo.id" class="cost-row">
-            <div class="cost-row-label">
-              Trasferimento<template v-if="wo.detail"> – {{ wo.detail }}</template>
-            </div>
-            <div class="cost-row-fields">
-              <span class="cost-lbl">Viaggio eff. €</span>
-              <input v-model.number="travelCostInputs[wo.id]" type="number" min="0" step="0.01" placeholder="0"
-                class="cost-input" />
-              <button class="btn btn-sm btn-primary" @click="saveTravelCost(wo.id)">Salva</button>
-            </div>
-          </div> -->
-          <div class="cost-row">
-            <div class="cost-row-label">Viaggio giornata</div>
-            <div class="cost-row-fields">
-              <span class="cost-lbl">Viaggio eff. €</span>
-              <input v-model.number="travelCostInput" type="number" min="0" step="0.01" placeholder="0"
-                class="cost-input" />
-              <button class="btn btn-sm btn-primary" @click="saveTravelCostDay">Salva</button>
-            </div>
+          <div class="oggi-cost-row">
+            <span class="oggi-cost-label">Pranzo €</span>
+            <input v-model.number="lunchCostInput" type="number" min="0" step="0.01" placeholder="0" class="oggi-cost-input" />
+            <button class="oggi-cost-save" @click="saveLunchCostDay">Salva</button>
           </div>
-
-          <!-- Pranzo: campo unico giornaliero -->
-          <div class="cost-row">
-            <div class="cost-row-label">Pranzo giornata</div>
-            <div class="cost-row-fields">
-              <span class="cost-lbl">Pranzo eff. €</span>
-              <input v-model.number="lunchCostInput" type="number" min="0" step="0.01" placeholder="0"
-                class="cost-input" />
-              <button class="btn btn-sm btn-primary" @click="saveLunchCostDay">Salva</button>
-            </div>
-          </div>
-
-          <!-- Materiale: campo unico giornaliero -->
-          <div class="cost-row">
-            <div class="cost-row-label">Materiale giornata</div>
-            <div class="cost-row-fields">
-              <span class="cost-lbl">Materiale eff. €</span>
-              <input v-model.number="materialCostInput" type="number" min="0" step="0.01" placeholder="0"
-                class="cost-input" />
-              <button class="btn btn-sm btn-primary" @click="saveMaterialCostDay">Salva</button>
-            </div>
-          </div>
-
-        </div>
-
-      </div><!-- /timer-left-col -->
-
-
-      <!-- ── Colonna destra: azioni + log ──────────────────────────── -->
-      <div id="timer-right-col">
-
-        <!-- Griglia 2×2 per avviare le 4 tipologie di attività -->
-        <div>
-          <div class="slabel">AVVIA NUOVA ATTIVITÀ</div>
-          <div class="action-grid">
-
-            <!-- TRASFERIMENTO -->
-            <div class="action-card" @click="openModal('trasferimento')">
-              <div class="action-card-icon" style="background: var(--blue)">
-                <svg viewBox="0 0 24 24">
-                  <path d="M5 12h14M12 5l7 7-7 7" />
-                </svg>
-              </div>
-              <div>
-                <div class="action-card-label">Trasferimento</div>
-                <div class="action-card-sub">Verso un cantiere</div>
-              </div>
-            </div>
-
-            <!-- POSA -->
-            <div class="action-card" @click="openModal('posa')">
-              <div class="action-card-icon" style="background: var(--orange)">
-                <svg viewBox="0 0 24 24">
-                  <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-                </svg>
-              </div>
-              <div>
-                <div class="action-card-label">Posa</div>
-                <div class="action-card-sub">Attrezzatura parco</div>
-              </div>
-            </div>
-
-            <!-- PAUSA PRANZO -->
-            <div class="action-card" @click="startDirectActivity('pausa_pranzo', 'Pausa pranzo', '')">
-              <div class="action-card-icon" style="background: var(--yellow)">
-                <svg viewBox="0 0 24 24" stroke="#444">
-                  <path d="M18 8h1a4 4 0 010 8h-1M2 8h16v9a4 4 0 01-4 4H6a4 4 0 01-4-4V8zM6 1v3M10 1v3M14 1v3" />
-                </svg>
-              </div>
-              <div>
-                <div class="action-card-label">Pausa Pranzo</div>
-                <div class="action-card-sub">Registra pausa</div>
-              </div>
-            </div>
-
-            <!-- ALTRO -->
-            <div class="action-card" @click="openModal('altro')">
-              <div class="action-card-icon" style="background: var(--purple)">
-                <svg viewBox="0 0 24 24">
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="12" y1="8" x2="12" y2="12" />
-                  <line x1="12" y1="16" x2="12.01" y2="16" />
-                </svg>
-              </div>
-              <div>
-                <div class="action-card-label">Altro</div>
-                <div class="action-card-sub">Attività generica</div>
-              </div>
-            </div>
-
-          </div><!-- /action-grid -->
-        </div>
-
-        <!-- Da fare oggi (attività pianificate non ancora avviate) ─────── -->
-        <div v-if="plannedTodayActivities.length">
-          <div class="slabel">DA FARE OGGI</div>
-          <div class="card">
-            <div class="card-body">
-              <div v-for="a in plannedTodayActivities" :key="a.id" class="log-item planned-item">
-                <div class="log-dot" :style="{ background: ACT[a.type]?.color ?? '#888' }" />
-                <div class="log-body">
-                  <div class="log-title">
-                    {{ a.detail }}
-                    <span class="planned-badge">📋 Pianificato</span>
-                  </div>
-                  <div class="log-meta">
-                    {{ ACT[a.type]?.label ?? a.type }}
-                    <template v-if="a.orderNumber"> · Ord. <strong>{{ a.orderNumber }}</strong></template>
-                    <template v-if="a.workOrderId && woEstimatedTimeMap.get(a.workOrderId)">
-                      · <span class="planned-time-chip">⏱ {{ fmtEstimated(woEstimatedTimeMap.get(a.workOrderId)!)
-                        }}</span>
-                    </template>
-                    <template v-if="a.note"> · {{ a.note }}</template>
-                  </div>
-                  <div class="log-actions">
-                    <button class="photo-btn start-btn" @click="startPlannedActivity(a)">
-                      <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
-                        <polygon points="5 3 19 12 5 21 5 3" />
-                      </svg>
-                      Inizia
-                    </button>
-                    <button class="photo-btn delete-btn" @click="deleteActivity(a.id)">
-                      <svg viewBox="0 0 24 24">
-                        <polyline points="3 6 5 6 21 6" />
-                        <path
-                          d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
-                      </svg>
-                      Rimuovi
-                    </button>
-                    <a
-                      v-if="a.workOrderId && woMapsLinkMap.get(a.workOrderId)"
-                      :href="woMapsLinkMap.get(a.workOrderId)"
-                      target="_blank"
-                      rel="noopener"
-                      class="photo-btn maps-btn"
-                    >
-                      <svg viewBox="0 0 24 24">
-                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
-                        <circle cx="12" cy="10" r="3"/>
-                      </svg>
-                      Maps
-                    </a>
-                  </div>
-                </div>
-                <div class="log-dur planned-dur">—</div>
-              </div>
-            </div>
+          <div class="oggi-cost-row">
+            <span class="oggi-cost-label">Materiale €</span>
+            <input v-model.number="materialCostInput" type="number" min="0" step="0.01" placeholder="0" class="oggi-cost-input" />
+            <button class="oggi-cost-save" @click="saveMaterialCostDay">Salva</button>
           </div>
         </div>
+      </div>
 
-        <!-- Log attività di oggi ────────────────────────────────────── -->
-        <div>
-          <div class="slabel">ATTIVITÀ DI OGGI</div>
-          <div class="card">
-            <div class="card-body">
-
-              <!-- Empty state -->
-              <div v-if="!todayActivities.length" class="empty">
-                <svg viewBox="0 0 24 24">
-                  <rect x="3" y="4" width="18" height="18" rx="2" />
-                  <path d="M16 2v4M8 2v4M3 10h18" />
-                </svg>
-                <h3>Nessuna attività</h3>
-                <p>Avvia un'attività per iniziare a tracciare</p>
-              </div>
-
-              <!-- Lista attività di oggi -->
-              <div v-for="a in todayActivities" :key="a.id" class="log-item">
-                <!-- Pallino colorato tipo attività -->
-                <div class="log-dot" :style="{ background: ACT[a.type]?.color ?? '#888' }" />
-
-                <div class="log-body">
-                  <!-- Titolo (detail) -->
-                  <div class="log-title">{{ a.detail }}</div>
-                  <!-- Meta: tipo · orario · note · numero ordine -->
-                  <div class="log-meta">
-                    {{ ACT[a.type]?.label ?? a.type }} · {{ fmtTime(a.startTime) }}
-                    <template v-if="a.orderNumber"> · Ord. <strong>{{ a.orderNumber }}</strong></template>
-                    <template v-if="a.note"> · {{ a.note }}</template>
-                  </div>
-
-                  <!-- Miniature foto attività -->
-                  <div v-if="a.photos?.length" class="log-photos">
-                    <img v-for="(p, pi) in a.photos" :key="pi" class="log-photo-thumb" :src="photoSrc(p)"
-                      :alt="`Foto ${pi + 1}`" @click="openLightbox(a.id, pi)">
-                  </div>
-
-                  <!-- Miniature scontrini (solo pausa_pranzo) -->
-                  <div v-if="a.type === 'pausa_pranzo' && a.receiptPhotos?.length" class="log-photos">
-                    <div class="receipt-label">Scontrini:</div>
-                    <img v-for="(p, pi) in a.receiptPhotos" :key="pi" class="log-photo-thumb receipt-thumb"
-                      :src="photoSrc(p)" :alt="`Scontrino ${pi + 1}`" @click="openReceiptLightbox(a.id, pi)">
-                  </div>
-
-                  <!-- Azioni bottoni -->
-                  <div class="log-actions">
-                    <!-- Aggiungi foto -->
-                    <button v-if="a.type !== 'pausa_pranzo'" class="photo-btn foto-btn" @click="triggerPhotoCapture(a.id)">
-                      <svg viewBox="0 0 24 24">
-                        <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" />
-                        <circle cx="12" cy="13" r="4" />
-                      </svg>
-                      Foto
-                    </button>
-
-                    <!-- Aggiungi scontrino (solo pausa pranzo) -->
-                    <button v-if="a.type === 'pausa_pranzo'" class="photo-btn receipt-btn"
-                      @click="triggerReceiptCapture(a.id)">
-                      <svg viewBox="0 0 24 24">
-                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-                        <polyline points="14 2 14 8 20 8" />
-                        <line x1="9" y1="13" x2="15" y2="13" />
-                        <line x1="9" y1="17" x2="15" y2="17" />
-                      </svg>
-                      Scontrino
-                    </button>
-
-                    <!-- Riprendi (solo attività completate e non in corso) -->
-                    <button v-if="a.duration !== null && a.id !== current?.id" class="photo-btn resume-btn"
-                      @click="resumeActivity(a.type, a.detail, a.note)">
-                      <svg viewBox="0 0 24 24">
-                        <polygon points="5 3 19 12 5 21 5 3" />
-                      </svg>
-                      Riprendi
-                    </button>
-
-                    <!-- Link Maps (se l'attività è collegata a un WO con mapsLink) -->
-                    <a
-                      v-if="a.workOrderId && woMapsLinkMap.get(a.workOrderId)"
-                      :href="woMapsLinkMap.get(a.workOrderId)"
-                      target="_blank"
-                      rel="noopener"
-                      class="photo-btn maps-btn"
-                    >
-                      <svg viewBox="0 0 24 24">
-                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
-                        <circle cx="12" cy="10" r="3"/>
-                      </svg>
-                      Maps
-                    </a>
-
-                    <!-- Elimina -->
-                    <button v-if="a.id !== current?.id" class="photo-btn delete-btn" @click="deleteActivity(a.id)">
-                      <svg viewBox="0 0 24 24">
-                        <polyline points="3 6 5 6 21 6" />
-                        <path
-                          d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2" />
-                      </svg>
-                      Elimina
-                    </button>
-                  </div>
-                </div>
-
-                <!-- Durata a destra -->
-                <div class="log-dur">
-                  <template v-if="a.duration !== null">{{ fmtDur(a.duration) }}</template>
-                  <span v-else class="log-ongoing">● In corso</span>
-                </div>
-              </div>
-
-            </div>
+      <!-- Foto cantiere -->
+      <div class="oggi-section">
+        <div class="oggi-section-label">FOTO CANTIERE</div>
+        <div v-if="sitePhotos.length" class="oggi-photos-grid">
+          <div v-for="(p, i) in sitePhotos" :key="i" class="oggi-photo-wrap">
+            <img :src="photoSrc(p)" :alt="`Cantiere ${i+1}`" @click="openSiteLightbox(i)" />
+            <button class="oggi-photo-del" @click="deleteSitePhoto(i)">✕</button>
           </div>
         </div>
+        <button class="oggi-photo-add-btn" @click="triggerSitePhoto">
+          <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          Scatta foto al cantiere
+        </button>
+      </div>
 
-      </div><!-- /timer-right-col -->
-    </div><!-- /timer-cols -->
+      <!-- Note cantiere -->
+      <div class="oggi-section">
+        <div class="oggi-section-label">NOTE DI CANTIERE</div>
+        <textarea v-model="dayNote" class="live-notes-area" placeholder="Note sul cantiere di oggi..." rows="3" @blur="saveDayNote" />
+      </div>
 
-    <!-- Input file nascosti -->
-    <input ref="fileInputRef" type="file" accept="image/*" capture="environment" multiple style="display: none"
-      @change="handleFileInput">
-    <input ref="receiptFileInputRef" type="file" accept="image/*" capture="environment" multiple style="display: none"
-      @change="handleReceiptInput">
-    <input ref="sitePhotoInputRef" type="file" accept="image/*" capture="environment" multiple style="display: none"
-      @change="handleSitePhotoInput">
+    </div><!-- /oggi-view -->
 
-    <!-- Popup conferma eliminazione attività -->
+
+    <!-- Input file nascosti (sempre presenti nel DOM) -->
+    <input ref="fileInputRef" type="file" accept="image/*" capture="environment" multiple style="display:none" @change="handleFileInput">
+    <input ref="receiptFileInputRef" type="file" accept="image/*" capture="environment" multiple style="display:none" @change="handleReceiptInput">
+    <input ref="sitePhotoInputRef" type="file" accept="image/*" capture="environment" multiple style="display:none" @change="handleSitePhotoInput">
+
+    <!-- Popup conferma eliminazione -->
     <div v-if="pendingDeleteId" class="confirm-overlay" @click.self="cancelDelete">
       <div class="confirm-dialog">
         <p class="confirm-msg">Eliminare questa attività?<br><span class="confirm-sub">L'operazione non è reversibile.</span></p>
@@ -867,111 +800,705 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
 </template>
 
 <style scoped lang="scss">
-/* ──────────────────────────────────────────────────────────────────
-   Gap uniforme tra le sezioni di ogni colonna (mobile e desktop)
-   ────────────────────────────────────────────────────────────────── */
-#timer-left-col,
-#timer-right-col {
+#view-timer {
+  min-height: 100%;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// OGGI VIEW (idle)
+// ════════════════════════════════════════════════════════════════════
+
+.oggi-view {
+  padding: 0 0 24px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 0;
 }
 
-/* ──────────────────────────────────────────────────────────────────
-   Header timer – giorno, data e orologio
-   ────────────────────────────────────────────────────────────────── */
-.hdr-day {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.8px;
+// ── Header ──────────────────────────────────────────────────────────
+.oggi-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 20px 16px;
+  padding-top: calc(20px + var(--safe-t));
+}
+
+.oggi-date {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
   text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: 3px;
+  letter-spacing: .8px;
+  margin-bottom: 4px;
 }
 
-.hdr-time {
-  font-family: 'Barlow Condensed', sans-serif;
-  font-size: 36px;
-  font-weight: 900;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
+.oggi-greeting {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.1;
 }
 
-/* ──────────────────────────────────────────────────────────────────
-   Card attività corrente (#active-card)
-   ────────────────────────────────────────────────────────────────── */
-#active-card {
-  position: relative;
+// ── Status chips ────────────────────────────────────────────────────
+.oggi-status-row {
+  display: flex;
+  gap: 8px;
+  padding: 0 20px 20px;
+}
+
+.oggi-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: 22px 20px 18px;
-  overflow: hidden;
-  transition: border-color .35s ease;
+  color: var(--ink-2);
+}
 
-  &.running {
-    border-color: var(--orange);
+.oggi-chip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); }
+
+.oggi-chip-gps {
+  color: var(--ok-ink);
+  border-color: var(--ok-soft);
+  background: var(--ok-soft);
+}
+
+// ── Timer display ────────────────────────────────────────────────────
+.oggi-timer-display {
+  font-family: var(--ff-mono);
+  font-size: 56px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: var(--ink);
+  text-align: center;
+  padding: 0 20px;
+  line-height: 1;
+}
+
+.oggi-timer-hint {
+  font-size: 13px;
+  color: var(--muted);
+  text-align: center;
+  margin: 10px 0 24px;
+  padding: 0 20px;
+}
+
+// ── CTA primary ──────────────────────────────────────────────────────
+.oggi-btn-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin: 0 20px 12px;
+  padding: 18px 20px;
+  background: var(--live);
+  border: none;
+  border-radius: var(--radius);
+  font-family: var(--ff);
+  font-size: 17px;
+  font-weight: 700;
+  color: #000;
+  cursor: pointer;
+  transition: filter .12s, transform .1s;
+
+  &:active { transform: scale(.97); filter: brightness(.9); }
+
+  svg {
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+    stroke: none;
+    flex-shrink: 0;
   }
 }
 
-#active-card-bar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3px;
-  background: var(--dim);
-  transition: background .35s ease;
+// ── Secondary actions row ────────────────────────────────────────────
+.oggi-btn-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+  margin: 0 20px 24px;
 }
 
-#ac-badge {
+.oggi-btn-secondary {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--ff);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background .12s, border-color .12s, transform .1s;
+
+  &:active { transform: scale(.95); }
+  &:hover  { background: var(--surface-2); }
+
+  svg {
+    width: 22px;
+    height: 22px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
+
+// ── Section layout ───────────────────────────────────────────────────
+.oggi-section {
+  padding: 0 20px 20px;
+}
+
+.oggi-section-header {
   display: flex;
   align-items: center;
-  gap: 7px;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.oggi-section-label {
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 1.8px;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
-  color: var(--dim);
-  margin-top: 4px;
-  margin-bottom: 8px;
-  transition: color .35s;
-}
-
-#ac-badge-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--dim);
-  flex-shrink: 0;
-  transition: background .35s;
-}
-
-#ac-name {
-  font-family: 'Barlow Condensed', sans-serif;
-  font-size: 28px;
-  font-weight: 700;
-  line-height: 1.2;
   color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.oggi-section-dur {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+// ── Job card (prossimo cantiere) ─────────────────────────────────────
+.oggi-job-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.oggi-job-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-bottom: 8px;
-  transition: color .35s;
+}
+
+.oggi-job-badges { display: flex; gap: 6px; }
+
+.oggi-job-code {
+  font-family: var(--ff-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.oggi-job-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 8px;
+  line-height: 1.3;
+}
+
+.oggi-job-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 14px;
+
+  span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  svg {
+    width: 12px;
+    height: 12px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
+
+.oggi-job-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.oggi-job-btn-ghost {
+  flex: 1;
+  padding: 10px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--ff);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+  cursor: pointer;
+  text-align: center;
+
+  &:active { opacity: .7; }
+}
+
+.oggi-job-btn-primary {
+  flex: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px;
+  background: var(--primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--ff);
+  font-size: 13px;
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+
+  &:active { opacity: .8; }
+
+  svg {
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+    stroke: none;
+  }
+}
+
+// ── Schedule list ─────────────────────────────────────────────────────
+.oggi-schedule-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+
+  &:last-child { border-bottom: none; }
+}
+
+.oggi-sched-planned { opacity: .8; }
+
+.oggi-sched-marker {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 700;
+
+  &.done {
+    background: var(--ok-soft);
+    color: var(--ok-ink);
+
+    svg {
+      width: 14px;
+      height: 14px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 2.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+  }
+
+  &.planned {
+    background: var(--surface-2);
+    color: var(--muted);
+    border: 1px dashed var(--border-strong);
+  }
+}
+
+.oggi-sched-body { flex: 1; min-width: 0; }
+
+.oggi-sched-time {
+  font-family: var(--ff-mono);
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.oggi-sched-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
 
-  &.running {
-    color: var(--text);
+.oggi-sched-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.oggi-sched-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.sched-action-btn {
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  color: var(--muted);
+
+  svg {
+    width: 13px;
+    height: 13px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 }
 
-/* Numero ordine nella card attiva */
-#ac-order {
+.sched-delete { color: var(--err-ink); }
+
+.sched-start-btn {
+  width: 34px;
+  height: 34px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  justify-content: center;
+  background: var(--primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: #fff;
+
+  svg {
+    width: 14px;
+    height: 14px;
+    fill: currentColor;
+    stroke: none;
+  }
+}
+
+// ── Empty state ───────────────────────────────────────────────────────
+.oggi-empty {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--muted);
+
+  svg {
+    width: 44px;
+    height: 44px;
+    stroke: var(--muted);
+    fill: none;
+    stroke-width: 1.4;
+    margin: 0 auto 14px;
+    display: block;
+  }
+}
+
+.oggi-empty-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.oggi-empty-sub   { font-size: 13px; }
+
+// ── Costi ─────────────────────────────────────────────────────────────
+.oggi-costs-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 0;
+}
+
+.oggi-cost-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+
+  &:last-child { border-bottom: none; }
+}
+
+.oggi-cost-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  flex: 1;
+}
+
+.oggi-cost-input {
+  width: 80px !important;
+  padding: 7px 10px !important;
+  font-size: 14px !important;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.oggi-cost-save {
+  padding: 7px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  font-family: var(--ff);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  cursor: pointer;
+
+  &:active { opacity: .7; }
+}
+
+// ── Foto cantiere ─────────────────────────────────────────────────────
+.oggi-photos-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.oggi-photo-wrap {
+  position: relative;
+  width: 72px;
+  height: 72px;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    cursor: pointer;
+  }
+}
+
+.oggi-photo-del {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 18px;
+  height: 18px;
+  background: var(--err);
+  border: none;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+}
+
+.oggi-photo-add-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--ff);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+
+  svg {
+    width: 16px;
+    height: 16px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
+
+
+// ════════════════════════════════════════════════════════════════════
+// LIVE SESSION VIEW
+// ════════════════════════════════════════════════════════════════════
+
+.live-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding-bottom: 100px;
+}
+
+// ── Header arancione ─────────────────────────────────────────────────
+.live-header {
+  background: var(--live);
+  padding: 16px 20px;
+  padding-top: calc(16px + var(--safe-t));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.live-header-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-dot-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #000;
+  animation: pulse 1.5s infinite;
+}
+
+.live-header-label {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: #000;
+}
+
+.live-header-right {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(0,0,0,.7);
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+  max-width: 180px;
+}
+
+// ── Timer section ─────────────────────────────────────────────────────
+.live-timer-section {
+  padding: 28px 20px 20px;
+  text-align: center;
+}
+
+.live-timer-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.live-timer-display {
+  font-family: var(--ff-mono);
+  font-size: 60px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  line-height: 1;
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+}
+
+.live-timer-hm  { color: var(--ink); }
+.live-timer-sec { color: var(--live); }
+
+.live-timer-meta {
   font-size: 12px;
   color: var(--muted);
-  margin-bottom: 12px;
+  margin-top: 8px;
+}
+
+.live-progress-bar {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  margin-top: 16px;
+  overflow: hidden;
+}
+
+.live-progress-fill {
+  height: 100%;
+  background: var(--live);
+  border-radius: 2px;
+  transition: width .5s ease;
+}
+
+// ── Job card ──────────────────────────────────────────────────────────
+.live-job-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin: 0 20px 16px;
+}
+
+.live-job-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.live-job-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ok-ink);
+  background: var(--ok-soft);
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+}
+
+.live-dot-sm {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok);
+  display: inline-block;
+}
+
+.live-job-code {
+  font-family: var(--ff-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.live-job-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 6px;
+  line-height: 1.3;
+}
+
+.live-job-loc {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--muted);
 
   svg {
     width: 12px;
@@ -985,501 +1512,187 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
   }
 }
 
-#timer-el {
-  font-family: 'Barlow Condensed', sans-serif;
-  font-size: 64px;
-  font-weight: 900;
-  letter-spacing: 4px;
-  line-height: 1;
-  color: var(--dim);
-  transition: color .35s;
-  font-variant-numeric: tabular-nums;
-
-  &.running {
-    color: var(--orange);
-  }
-}
-
-#ac-loc-row {
-  display: flex;
+.live-geofence-ok {
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--muted);
-}
+  gap: 3px;
+  font-size: 11px;
+  color: var(--ok-ink);
+  margin-left: 6px;
 
-#ac-loc-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--dim);
-  flex-shrink: 0;
-  transition: background .35s;
-
-  &.gps-ok {
-    background: var(--green);
-    animation: blink 2.2s ease-in-out infinite;
-  }
-
-  &.gps-err {
-    background: var(--red);
+  svg {
+    width: 11px;
+    height: 11px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
   }
 }
 
-/* ──────────────────────────────────────────────────────────────────
-   Foto cantiere
-   ────────────────────────────────────────────────────────────────── */
-.site-photos-section {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: 16px;
-}
-
-.site-photos-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-.site-photo-wrap {
-  position: relative;
-  width: 70px;
-  height: 70px;
-}
-
-.site-photo-thumb {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  border-radius: var(--r-xs);
-  border: 2px solid var(--border2);
-  cursor: pointer;
-  transition: transform .12s;
-
-  &:hover {
-    transform: scale(1.06);
-  }
-}
-
-.site-photo-del {
-  position: absolute;
-  top: -5px;
-  right: -5px;
-  width: 18px;
-  height: 18px;
-  background: var(--red);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 9px;
-  font-weight: 700;
-  color: #fff;
-  border: 2px solid var(--bg);
-}
-
-.site-photo-btn {
-  width: 100%;
-  justify-content: center;
-}
-
-/* ──────────────────────────────────────────────────────────────────
-   Note di cantiere
-   ────────────────────────────────────────────────────────────────── */
-.day-notes-section {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: 16px;
-}
-
-.day-notes-area {
-  width: 100%;
-  padding: 12px 14px;
-  background: var(--surface2);
-  border: 1px solid var(--border2);
-  border-radius: var(--r-sm);
-  color: var(--text);
-  font-family: 'DM Sans', sans-serif;
-  font-size: 14px;
-  line-height: 1.5;
-  outline: none;
-  resize: vertical;
-  transition: border-color .15s;
-
-  &:focus {
-    border-color: var(--orange);
-  }
-
-  &::placeholder {
-    color: var(--dim);
-  }
-}
-
-/* ──────────────────────────────────────────────────────────────────
-   Griglia azioni (4 card avvio attività)
-   ────────────────────────────────────────────────────────────────── */
-.action-grid {
+// ── Action grid 2×2 ───────────────────────────────────────────────────
+.live-action-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+  margin: 0 20px 16px;
 }
 
-.action-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: 16px 14px;
-  cursor: pointer;
-  transition: border-color .14s, transform .1s, background .14s;
+.live-action-btn {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 10px;
-  user-select: none;
+  gap: 6px;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background .12s;
 
-  &:hover {
-    border-color: var(--border2);
-    background: var(--surface2);
-  }
-
-  &:active {
-    transform: scale(.96);
-  }
-}
-
-.action-card-icon {
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  &:active { background: var(--surface-2); transform: scale(.97); }
 
   svg {
     width: 20px;
     height: 20px;
-    stroke: #fff;
+    stroke: var(--ink-2);
     fill: none;
-    stroke-width: 2;
+    stroke-width: 1.8;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
 }
 
-.action-card-label {
-  font-family: 'Barlow Condensed', sans-serif;
-  font-size: 16px;
-  font-weight: 800;
-  text-transform: uppercase;
-  letter-spacing: .4px;
-  line-height: 1.1;
-}
+.live-action-warn svg { stroke: var(--warn); }
 
-.action-card-sub {
-  font-size: 11px;
-  color: var(--muted);
-  margin-top: -4px;
-}
-
-/* ──────────────────────────────────────────────────────────────────
-   Log attività giornaliero
-   ────────────────────────────────────────────────────────────────── */
-.log-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 12px;
-  padding: 12px 0;
-  border-bottom: 1px solid var(--border);
-
-  &:last-child {
-    border-bottom: none;
-  }
-}
-
-.log-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  margin-top: 5px;
-  flex-shrink: 0;
-}
-
-.log-body {
-  flex: 1;
-  min-width: 0;
-}
-
-.log-title {
+.live-action-label {
   font-size: 14px;
   font-weight: 600;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--ink);
 }
 
-.log-meta {
-  font-size: 12px;
+.live-action-count {
+  font-size: 11px;
   color: var(--muted);
-  margin-top: 2px;
 }
 
-.log-dur {
-  font-family: 'Barlow Condensed', sans-serif;
-  font-size: 16px;
+// ── Foto row ──────────────────────────────────────────────────────────
+.live-photos-row {
+  display: flex;
+  gap: 8px;
+  padding: 0 20px 16px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.live-photo-thumb {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  flex-shrink: 0;
+  cursor: pointer;
+  border: 1px solid var(--border);
+
+  img { width: 100%; height: 100%; object-fit: cover; }
+}
+
+.live-photo-more {
+  width: 64px;
+  height: 64px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
   font-weight: 700;
   color: var(--muted);
   flex-shrink: 0;
-  align-self: center;
 }
 
-.log-ongoing {
-  color: var(--orange);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.log-photos {
-  display: flex;
-  gap: 5px;
-  flex-wrap: wrap;
-  margin-top: 7px;
-  align-items: center;
-}
-
-.receipt-label {
+// ── Note section ─────────────────────────────────────────────────────
+.live-section-label {
   font-size: 10px;
   font-weight: 700;
-  color: var(--muted);
+  letter-spacing: 1.5px;
   text-transform: uppercase;
-  letter-spacing: .5px;
-  margin-right: 2px;
-}
-
-.log-photo-thumb {
-  width: 50px;
-  height: 50px;
-  border-radius: var(--r-xs);
-  object-fit: cover;
-  cursor: pointer;
-  border: 2px solid var(--border2);
-  transition: transform .12s, border-color .12s;
-
-  &:hover {
-    transform: scale(1.08);
-    border-color: var(--orange);
-  }
-}
-
-.receipt-thumb {
-  border-color: var(--yellow) !important;
-}
-
-/* Riga bottoni azioni sotto ogni log item */
-.log-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-/* Bottone azione inline nel log */
-.photo-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  background: var(--surface3);
-  border: 1px solid var(--border2);
-  border-radius: var(--r-xs);
-  font-size: 11px;
-  font-weight: 600;
   color: var(--muted);
-  cursor: pointer;
-  transition: color .12s, border-color .12s, background .12s;
+  margin-bottom: 8px;
+  padding: 0 20px;
+}
 
-  &:hover {
-    color: var(--text);
-    border-color: var(--border2);
-    background: var(--surface2);
-  }
+.live-notes-section {
+  padding: 0 0 16px;
+}
+
+.live-notes-area {
+  width: calc(100% - 40px);
+  margin: 0 20px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-family: var(--ff);
+  font-size: 14px;
+  line-height: 1.5;
+  outline: none;
+  resize: vertical;
+
+  &:focus { border-color: var(--primary); }
+  &::placeholder { color: var(--muted); }
+}
+
+// ── Stop button ───────────────────────────────────────────────────────
+.live-stop-row {
+  position: fixed;
+  bottom: calc(var(--nav-h) + var(--safe-b) + 12px);
+  left: 0;
+  right: 0;
+  padding: 12px 20px;
+  background: linear-gradient(transparent, var(--bg) 40%);
+}
+
+.live-stop-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 18px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font-family: var(--ff);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ink);
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+
+  &:active { background: var(--err-soft); border-color: var(--err); color: var(--err-ink); transform: scale(.97); }
 
   svg {
-    width: 12px;
-    height: 12px;
-    stroke: currentColor;
-    fill: none;
-    stroke-width: 2;
-    stroke-linecap: round;
-    stroke-linejoin: round;
+    width: 18px;
+    height: 18px;
+    fill: currentColor;
+    stroke: none;
+    flex-shrink: 0;
   }
 }
 
-.foto-btn {
-  border-color: #1e88e555;
-  color: #1e88e5;
 
-  &:hover { background: #1e88e518; border-color: #1e88e5; }
-}
+// ════════════════════════════════════════════════════════════════════
+// CONFERMA ELIMINAZIONE
+// ════════════════════════════════════════════════════════════════════
 
-.receipt-btn:hover {
-  border-color: var(--yellow);
-  color: var(--yellow);
-}
-
-.resume-btn {
-  border-color: var(--green);
-  color: var(--green);
-
-  &:hover { background: rgba(76, 175, 80, .12); }
-}
-
-.delete-btn {
-  border-color: var(--red);
-  color: var(--red);
-
-  &:hover { background: rgba(229, 57, 53, .12); }
-}
-
-.maps-btn {
-  border-color: #4db6ac55;
-  color: #4db6ac;
-  text-decoration: none;
-
-  &:hover { background: #4db6ac18; border-color: #4db6ac; }
-}
-
-.start-btn {
-  border-color: var(--green);
-  color: var(--green);
-
-  &:hover { background: rgba(76, 175, 80, .12); }
-}
-
-/* Attività pianificata (sezione "Da fare oggi") */
-.planned-item {
-  background: rgba(255, 95, 0, .04);
-  border-radius: var(--r-sm);
-  padding: 6px 8px;
-  border: 1px dashed var(--border2);
-  margin-bottom: 4px;
-}
-
-.planned-badge {
-  display: inline-block;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--orange);
-  background: rgba(255, 95, 0, .12);
-  padding: 1px 6px;
-  border-radius: 20px;
-  margin-left: 6px;
-  vertical-align: middle;
-}
-
-.planned-dur {
-  color: var(--dim);
-  font-style: italic;
-}
-
-.planned-time-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--green);
-}
-
-/* ──────────────────────────────────────────────────────────────────
-   Costi effettivi (viaggio / pranzo)
-   ────────────────────────────────────────────────────────────────── */
-.costs-section {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: 16px;
-}
-
-.cost-row {
-  display: flex;                      /* Allinea elementi in orizzontale */
-  justify-content: space-between;     /* Spinge le due estremità ai lati */
-  align-items: center;                /* Centra verticalmente testo e input */
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
-  gap: 16px;                          /* Spazio minimo tra label e campi */
-}
-
-.cost-row:last-child {
-  border-bottom: none;
-}
-
-.cost-row-label {
-  font-size: 13px;                    /* Leggermente aumentato per leggibilità orizzontale */
-  font-weight: 600;
-  color: var(--muted);
-  flex: 1;                            /* Prende tutto lo spazio vuoto, allineando i campi di destra */
-  margin-bottom: 0;                   /* Rimosso il margine inferiore precedente */
-  white-space: nowrap;                /* Evita che il testo vada a capo */
-  overflow: hidden;
-  text-overflow: ellipsis;            /* Se il testo è troppo lungo, mette i puntini */
-}
-
-.cost-row-fields {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;          /* Assicura l'allineamento a destra */
-  gap: 10px;
-  flex-shrink: 0;                     /* Impedisce che input e bottone si rimpiccioliscano su schermi piccoli */
-}
-
-.cost-lbl {
-  font-size: 12px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.cost-input {
-  width: 90px !important;
-  padding: 8px 10px !important;
-  font-size: 14px !important;
-  text-align: right;                  /* Consigliato per inserimento prezzi */
-}
-
-/* Opzionale: fissa la larghezza del bottone per renderli tutti identici */
-.cost-row-fields .btn {
-  width: 65px;
-  text-align: center;
-}
-
-@media (max-width: 799px) {
-  .photo-btn {
-    gap: 4px;
-    padding: 8px 12px;
-    font-size: 13px;
-    border-radius: var(--r-sm);
-
-    svg {
-      width: 15px;
-      height: 15px;
-    }
-  }
-
-  .log-actions {
-    gap: 8px;
-    margin-top: 8px;
-  }
-}
-
-/* ── Popup conferma eliminazione ─────────────────────────────────── */
 .confirm-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.55);
+  background: rgba(0,0,0,.6);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1487,14 +1700,14 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
 }
 
 .confirm-dialog {
-  background: var(--card-bg, #1e1e1e);
-  border: 1px solid var(--border, #333);
-  border-radius: var(--r-lg, 14px);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
   padding: 24px 28px;
   max-width: 320px;
   width: 90%;
   text-align: center;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-3);
 }
 
 .confirm-msg {
@@ -1502,12 +1715,13 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
   font-weight: 600;
   margin: 0 0 8px;
   line-height: 1.4;
+  color: var(--ink);
 }
 
 .confirm-sub {
   font-size: 13px;
   font-weight: 400;
-  color: var(--muted, #888);
+  color: var(--muted);
 }
 
 .confirm-actions {
@@ -1520,23 +1734,19 @@ const gpsText = computed(() => current.value ? geo.shortFmt(current.value.startL
 .confirm-btn {
   flex: 1;
   padding: 10px 16px;
-  border-radius: var(--r-sm, 8px);
+  border-radius: var(--radius-sm);
+  font-family: var(--ff);
   font-size: 14px;
   font-weight: 600;
   border: none;
   cursor: pointer;
-  transition: opacity 0.15s;
+  transition: opacity .15s;
 
-  &:active { opacity: 0.75; }
+  &:active { opacity: .75; }
 }
 
-.cancel-btn {
-  background: var(--surface, #2a2a2a);
-  color: var(--text, #fff);
-}
+.cancel-btn { background: var(--surface-2); color: var(--ink); border: 1px solid var(--border-strong); }
+.delete-confirm-btn { background: var(--err); color: #fff; }
 
-.delete-confirm-btn {
-  background: #e53935;
-  color: #fff;
-}
+
 </style>

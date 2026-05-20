@@ -146,7 +146,6 @@ export function useExport() {
         margin: { left: 14, right: 14 },
       })
 
-      // @ts-expect-error – jsPDF-autotable aggiunge lastAutoTable a doc
       let yPos = (doc as any).lastAutoTable.finalY + 12
 
       // ── Sezione fotografica (max 12 foto, griglia 3×N) ───────────────

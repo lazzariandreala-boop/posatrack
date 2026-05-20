@@ -46,9 +46,9 @@ const toastType = computed(() => {
   &.show { transform: translateX(-50%) translateY(0); }
 
   &.toast-info    { background: #2a2a2a; border: 1.5px solid #444;          color: #f0f0f0; }
-  &.toast-success { background: #1b3a22; border: 1.5px solid var(--green);  color: #6fcf80; }
-  &.toast-error   { background: #3a1b1b; border: 1.5px solid var(--red);    color: #f07070; }
-  &.toast-warning { background: #3a2f1b; border: 1.5px solid var(--orange); color: #f0b860; }
+  &.toast-success { background: #1b3a22; border: 1.5px solid var(--ok);  color: #6fcf80; }
+  &.toast-error   { background: #3a1b1b; border: 1.5px solid var(--err);    color: #f07070; }
+  &.toast-warning { background: #3a2f1b; border: 1.5px solid var(--live); color: #f0b860; }
 
   @media (min-width: 800px) {
     font-size: 17px;

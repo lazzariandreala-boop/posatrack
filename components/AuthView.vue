@@ -285,7 +285,7 @@ async function handleReset(): Promise<void> {
 
 .auth-card {
   background: var(--surface);
-  border: 1px solid var(--border2);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r);
   width: 100%;
   max-width: 420px;
@@ -301,10 +301,10 @@ async function handleReset(): Promise<void> {
 }
 
 .auth-brand-name {
-  font-family: 'Barlow Condensed', sans-serif;
+  font-family: var(--ff);
   font-size: 36px;
   font-weight: 900;
-  color: var(--orange);
+  color: var(--live);
   text-transform: uppercase;
   letter-spacing: 1px;
 }
@@ -318,8 +318,8 @@ async function handleReset(): Promise<void> {
 // ── Tabs ─────────────────────────────────────────────────────────────
 .auth-tabs {
   display: flex;
-  background: var(--surface2);
-  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
   padding: 3px;
   gap: 2px;
 }
@@ -329,8 +329,8 @@ async function handleReset(): Promise<void> {
   padding: 8px;
   border: none;
   background: transparent;
-  border-radius: calc(var(--r-sm) - 2px);
-  font-family: 'DM Sans', sans-serif;
+  border-radius: calc(var(--radius-sm) - 2px);
+  font-family: var(--ff);
   font-size: 14px;
   font-weight: 500;
   color: var(--muted);
@@ -339,7 +339,7 @@ async function handleReset(): Promise<void> {
 
   &.active {
     background: var(--surface);
-    color: var(--text);
+    color: var(--ink);
     box-shadow: 0 1px 4px rgba(0,0,0,.18);
   }
 }
@@ -354,29 +354,29 @@ async function handleReset(): Promise<void> {
 .auth-back-btn {
   background: none;
   border: none;
-  color: var(--orange);
+  color: var(--live);
   font-size: 13px;
   cursor: pointer;
   padding: 0;
   text-align: left;
-  font-family: 'DM Sans', sans-serif;
+  font-family: var(--ff);
 }
 
 .auth-section-label {
   font-size: 15px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--ink);
 }
 
 // ── Feedback ─────────────────────────────────────────────────────────
 .auth-feedback {
   padding: 10px 14px;
-  border-radius: var(--r-sm);
+  border-radius: var(--radius-sm);
   font-size: 13px;
   line-height: 1.4;
 
-  &.ok  { background: rgba(34,197,94,.1);  color: var(--green); }
-  &.err { background: rgba(239,68,68,.1);  color: var(--red);   }
+  &.ok  { background: rgba(34,197,94,.1);  color: var(--ok); }
+  &.err { background: rgba(239,68,68,.1);  color: var(--err);   }
 }
 
 // ── Form ─────────────────────────────────────────────────────────────
@@ -398,20 +398,20 @@ async function handleReset(): Promise<void> {
 }
 
 .auth-input {
-  background: var(--surface2);
-  border: 1px solid var(--border2);
-  border-radius: var(--r-sm);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   padding: 10px 12px;
   font-size: 14px;
-  color: var(--text);
-  font-family: 'DM Sans', sans-serif;
+  color: var(--ink);
+  font-family: var(--ff);
   outline: none;
   transition: border-color .15s;
   width: 100%;
 
-  &:focus { border-color: var(--orange); }
+  &:focus { border-color: var(--live); }
   &:disabled { opacity: .5; }
-  &::placeholder { color: var(--dim); }
+  &::placeholder { color: var(--muted); }
 }
 
 .auth-pw-wrap {
@@ -427,7 +427,7 @@ async function handleReset(): Promise<void> {
   border: none; background: transparent; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   color: var(--muted);
-  border-radius: var(--r-xs);
+  border-radius: var(--radius-xs);
 
   svg {
     width: 15px; height: 15px;
@@ -435,18 +435,18 @@ async function handleReset(): Promise<void> {
     stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
   }
 
-  &:hover { color: var(--text); }
+  &:hover { color: var(--ink); }
 }
 
 .auth-forgot {
   background: none;
   border: none;
-  color: var(--orange);
+  color: var(--live);
   font-size: 12px;
   cursor: pointer;
   padding: 0;
   text-align: right;
-  font-family: 'DM Sans', sans-serif;
+  font-family: var(--ff);
   align-self: flex-end;
 }
 
@@ -455,10 +455,10 @@ async function handleReset(): Promise<void> {
   width: 100%;
   padding: 11px 16px;
   border: none;
-  border-radius: var(--r-sm);
+  border-radius: var(--radius-sm);
   font-size: 14px;
   font-weight: 500;
-  font-family: 'DM Sans', sans-serif;
+  font-family: var(--ff);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -470,17 +470,17 @@ async function handleReset(): Promise<void> {
 }
 
 .auth-btn-primary {
-  background: var(--orange);
+  background: var(--live);
   color: #fff;
   &:not(:disabled):hover { background: var(--orange-d); }
 }
 
 .auth-btn-social {
-  background: var(--surface2);
-  color: var(--text);
-  border: 1px solid var(--border2);
+  background: var(--surface-2);
+  color: var(--ink);
+  border: 1px solid var(--border-strong);
   font-weight: 400;
-  &:not(:disabled):hover { background: var(--surface3); }
+  &:not(:disabled):hover { background: var(--surface-3); }
 }
 
 .auth-social-icon {
@@ -491,8 +491,8 @@ async function handleReset(): Promise<void> {
 
 .auth-badge-disabled {
   font-size: 10px;
-  background: var(--surface3);
-  color: var(--dim);
+  background: var(--surface-3);
+  color: var(--muted);
   padding: 2px 6px;
   border-radius: 4px;
   margin-left: auto;
@@ -513,7 +513,7 @@ async function handleReset(): Promise<void> {
   display: flex;
   align-items: center;
   gap: 12px;
-  color: var(--dim);
+  color: var(--muted);
   font-size: 12px;
 
   &::before, &::after {

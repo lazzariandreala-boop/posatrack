@@ -208,7 +208,7 @@ export interface Workspace {
 }
 
 /** Vista attiva nell'app (navigazione single-page) */
-export type ViewName = 'timer' | 'summary' | 'dashboard' | 'planning'
+export type ViewName = 'timer' | 'summary' | 'dashboard' | 'planning' | 'map' | 'profile'
 
 /** Metadati visuali per ogni tipo di attività */
 export interface ActivityTypeMeta {

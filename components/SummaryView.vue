@@ -290,10 +290,152 @@ onUnmounted(() => {
   if (mapInstance) { mapInstance.remove(); mapInstance = null }
   if (chartInstance) { chartInstance.destroy(); chartInstance = null }
 })
+
+// ── Mobile: lista attività raggruppate per data ───────────────────────
+
+type FilterKey = 'all' | 'today' | 'ongoing' | 'done'
+
+const mobileFilter = ref<FilterKey>('all')
+
+const todayDateStr = (() => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+})()
+
+const allActivities = computed(() => store.all().slice().sort((a, b) => b.startTime - a.startTime))
+
+const filteredActivities = computed(() => {
+  const acts = allActivities.value
+  switch (mobileFilter.value) {
+    case 'today':   return acts.filter(a => a.date === todayDateStr)
+    case 'ongoing': return acts.filter(a => a.duration === null)
+    case 'done':    return acts.filter(a => a.duration !== null)
+    default:        return acts
+  }
+})
+
+interface DayGroup {
+  label:      string
+  dateStr:    string
+  activities: typeof allActivities.value
+}
+
+const groupedByDay = computed((): DayGroup[] => {
+  const map = new Map<string, DayGroup>()
+  filteredActivities.value.forEach(a => {
+    if (!map.has(a.date)) {
+      const d = new Date(a.date + 'T12:00:00')
+      const labels: Record<string, string> = { [todayDateStr]: 'OGGI' }
+      const tmrw = new Date(); tmrw.setDate(tmrw.getDate() + 1)
+      const tmrwStr = tmrw.toISOString().split('T')[0]
+      labels[tmrwStr] = 'DOMANI'
+      const dayNames = ['DOM', 'LUN', 'MAR', 'MER', 'GIO', 'VEN', 'SAB']
+      const label = labels[a.date] ?? `${dayNames[d.getDay()]} ${d.getDate()} ${['GEN','FEB','MAR','APR','MAG','GIU','LUG','AGO','SET','OTT','NOV','DIC'][d.getMonth()]}`
+      map.set(a.date, { label, dateStr: a.date, activities: [] })
+    }
+    map.get(a.date)!.activities.push(a)
+  })
+  return Array.from(map.values())
+})
+
+const filterCounts = computed(() => ({
+  all:     allActivities.value.length,
+  today:   allActivities.value.filter(a => a.date === todayDateStr).length,
+  ongoing: allActivities.value.filter(a => a.duration === null).length,
+  done:    allActivities.value.filter(a => a.duration !== null).length,
+}))
+
+function fmtDurMob(seconds: number): string {
+  if (seconds >= 3600) {
+    const h = Math.floor(seconds / 3600)
+    const m = Math.floor((seconds % 3600) / 60)
+    return m > 0 ? `${h}h ${m}m` : `${h}h`
+  }
+  if (seconds >= 60) return `${Math.floor(seconds / 60)}m`
+  return `${seconds}s`
+}
+
+function fmtTimeMob(ts: number): string {
+  const d = new Date(ts)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
 </script>
 
 <template>
-  <div class="view" id="view-summary">
+
+  <!-- ══════════════════════════════════════════════════════════════
+       MOBILE: Lavori list (schermata "Lavori" del bottom nav)
+       ══════════════════════════════════════════════════════════════ -->
+  <div v-if="!appState.isDesktop.value" class="lavori-view">
+
+    <!-- Header -->
+    <div class="lavori-header">
+      <div class="lavori-title">Lavori</div>
+      <button class="lavori-filter-btn">
+        <svg viewBox="0 0 24 24"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+      </button>
+    </div>
+
+    <!-- Filter tabs -->
+    <div class="lavori-tabs">
+      <button class="lavori-tab" :class="{ active: mobileFilter === 'all' }"    @click="mobileFilter = 'all'">Tutti {{ filterCounts.all }}</button>
+      <button class="lavori-tab" :class="{ active: mobileFilter === 'today' }"  @click="mobileFilter = 'today'">Oggi {{ filterCounts.today }}</button>
+      <button class="lavori-tab" :class="{ active: mobileFilter === 'ongoing' }" @click="mobileFilter = 'ongoing'">
+        <span class="lavori-tab-dot" />In corso {{ filterCounts.ongoing }}
+      </button>
+      <button class="lavori-tab" :class="{ active: mobileFilter === 'done' }"   @click="mobileFilter = 'done'">Completati {{ filterCounts.done }}</button>
+    </div>
+
+    <!-- Empty state -->
+    <div v-if="!filteredActivities.length" class="lavori-empty">
+      <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      <div class="lavori-empty-title">Nessuna attività</div>
+      <div class="lavori-empty-sub">Avvia un'attività dalla scheda Oggi</div>
+    </div>
+
+    <!-- Grouped by date -->
+    <div v-for="group in groupedByDay" :key="group.dateStr" class="lavori-group">
+      <div class="lavori-group-label">{{ group.label }} · {{ group.activities.length }}</div>
+
+      <div v-for="a in group.activities" :key="a.id" class="lavori-card">
+        <div class="lavori-card-top">
+          <div class="lavori-card-badges">
+            <!-- Status badge -->
+            <span v-if="a.duration === null" class="badge badge-live">In corso</span>
+            <span v-else class="badge badge-ok">Completato</span>
+            <!-- Type badge -->
+            <span class="badge badge-muted">{{ ACT[a.type]?.label ?? a.type }}</span>
+          </div>
+          <span class="lavori-card-time">{{ fmtTimeMob(a.startTime) }}</span>
+        </div>
+
+        <div class="lavori-card-name">{{ a.detail || '—' }}</div>
+
+        <div class="lavori-card-meta">
+          <span v-if="a.startLoc" class="lavori-card-loc">
+            <svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+            {{ geo.shortFmt(a.startLoc) }}
+          </span>
+          <span v-if="a.duration !== null" class="lavori-card-dur">
+            {{ fmtDurMob(a.duration) }}
+          </span>
+          <span v-if="a.photos?.length" class="lavori-card-photos">
+            <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            {{ a.photos.length }}
+          </span>
+        </div>
+
+        <div v-if="a.note" class="lavori-card-note">{{ a.note }}</div>
+      </div>
+    </div>
+
+  </div><!-- /lavori-view -->
+
+
+  <!-- ══════════════════════════════════════════════════════════════
+       DESKTOP: existing summary with map + chart
+       ══════════════════════════════════════════════════════════════ -->
+  <div v-else class="view" id="view-summary">
 
     <!-- ── Header: titolo + navigazione giorni ────────────────────── -->
     <div class="page-header">
@@ -553,7 +695,8 @@ onUnmounted(() => {
       </div>
     </div>
 
-  </div><!-- /view-summary -->
+  </div><!-- /view-summary (desktop v-else) -->
+
 </template>
 
 <style scoped lang="scss">
@@ -796,5 +939,207 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 700;
   color: var(--muted);
+}
+
+// ════════════════════════════════════════════════════════════════════
+// MOBILE LAVORI VIEW
+// ════════════════════════════════════════════════════════════════════
+
+.lavori-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding-bottom: 24px;
+}
+
+.lavori-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 20px 12px;
+  padding-top: calc(20px + var(--safe-t));
+}
+
+.lavori-title {
+  font-size: 26px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.lavori-filter-btn {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+
+  svg {
+    width: 16px;
+    height: 16px;
+    stroke: var(--muted);
+    fill: none;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
+
+// ── Filter tabs ───────────────────────────────────────────────────────
+.lavori-tabs {
+  display: flex;
+  gap: 6px;
+  padding: 0 20px 16px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  &::-webkit-scrollbar { display: none; }
+}
+
+.lavori-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  font-family: var(--ff);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all .12s;
+
+  &.active {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--bg);
+    font-weight: 600;
+  }
+}
+
+.lavori-tab-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--live);
+  display: inline-block;
+}
+
+// ── Empty state ──────────────────────────────────────────────────────
+.lavori-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: var(--muted);
+
+  svg {
+    width: 44px;
+    height: 44px;
+    stroke: var(--muted);
+    fill: none;
+    stroke-width: 1.4;
+    display: block;
+    margin: 0 auto 14px;
+  }
+}
+
+.lavori-empty-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
+.lavori-empty-sub   { font-size: 13px; }
+
+// ── Day groups ───────────────────────────────────────────────────────
+.lavori-group {
+  margin-bottom: 8px;
+}
+
+.lavori-group-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 0 20px 8px;
+}
+
+// ── Activity card ────────────────────────────────────────────────────
+.lavori-card {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 20px;
+  margin-bottom: 2px;
+  cursor: pointer;
+  transition: background .12s;
+
+  &:active { background: var(--surface-2); }
+}
+
+.lavori-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.lavori-card-badges {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+
+.lavori-card-time {
+  font-family: var(--ff-mono);
+  font-size: 11px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.lavori-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 6px;
+  line-height: 1.3;
+}
+
+.lavori-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.lavori-card-loc,
+.lavori-card-dur,
+.lavori-card-photos {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+
+  svg {
+    width: 12px;
+    height: 12px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
+
+.lavori-card-note {
+  font-size: 12px;
+  color: var(--muted-2);
+  margin-top: 6px;
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 </style>

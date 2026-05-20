@@ -60,10 +60,13 @@ export default defineNuxtConfig({
         { name: 'theme-color', content: '#121212' },
       ],
       link: [
-        /* Font Google: Barlow Condensed per titoli/numeri, DM Sans per UI */
+        /* Preconnect Google Fonts */
+        { rel: 'preconnect', href: 'https://fonts.googleapis.com' },
+        { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' },
+        /* Geist (body/UI) + JetBrains Mono (timer/mono) */
         {
           rel: 'stylesheet',
-          href: 'https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600&display=swap',
+          href: 'https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap',
         },
         /* Leaflet CSS (necessario prima del JS per i marker e popup) */
         {

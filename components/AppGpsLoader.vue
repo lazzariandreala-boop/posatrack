@@ -48,8 +48,8 @@ const { isGpsLoading } = useAppState()
 .gps-spinner {
   width: 42px;
   height: 42px;
-  border: 3px solid var(--border2);
-  border-top-color: var(--orange);
+  border: 3px solid var(--border-strong);
+  border-top-color: var(--live);
   border-radius: 50%;
   animation: spin .75s linear infinite; // animazione in main.scss
 }

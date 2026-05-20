@@ -1,14 +1,4 @@
 <script setup lang="ts">
-/**
- * AppSidebar – Navigazione desktop
- * ─────────────────────────────────────────────────────────────────────
- * Visibile solo su desktop (≥ 800px). Contiene:
- *   - Brand / logo dell'app
- *   - Bottoni di navigazione
- *   - Stato sincronizzazione Firebase
- *   - Info utente + workspace
- *   - Bottone logout
- */
 import { useAppState } from '~/composables/useAppState'
 import { useAuth }     from '~/composables/useAuth'
 import { useStore }    from '~/composables/useStore'
@@ -25,130 +15,119 @@ async function handleLogout(): Promise<void> {
   appState.clearActiveWorkspace()
   await auth.logout()
 }
+
+const userDisplayName = computed(() => auth.currentUser.value?.displayName || auth.currentUser.value?.email || 'Utente')
+const userInitials = computed(() => {
+  const name = auth.currentUser.value?.displayName || auth.currentUser.value?.email || 'U'
+  return name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
+})
+const workspaceName = computed(() => appState.activeWorkspaceName.value || 'Workspace')
+
+import { computed } from 'vue'
 </script>
 
 <template>
   <aside id="sidebar">
 
-    <!-- Brand ────────────────────────────────────────────────────── -->
-    <div class="sidebar-brand">
-      <div class="sidebar-brand-name">🏗 PosaTrack</div>
-      <div class="sidebar-brand-sub" style="margin-bottom: 10px;">Gestione Cantiere</div>
-      <img src="../Logo.png" alt="Pozza Logo" width="200" height="150" />
+    <!-- ── Logo / Brand ──────────────────────────────────────────── -->
+    <div class="sb-brand">
+      <div class="sb-logo">P</div>
+      <div class="sb-brand-name">Posatrack</div>
+      <button class="sb-search-btn" title="Cerca">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </button>
     </div>
 
-    <!-- Navigazione ──────────────────────────────────────────────── -->
-    <nav class="sidebar-nav">
-
-      <button
-        class="sidebar-nav-btn"
-        :class="{ active: currentView === 'timer' }"
-        @click="navigate('timer')"
-      >
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        Timer &amp; Attività
+    <!-- ── New lavorazione CTA ──────────────────────────────────── -->
+    <div class="sb-cta-wrap">
+      <button class="sb-cta-btn" @click="navigate('planning')">
+        <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Nuova lavorazione
       </button>
+    </div>
 
-      <button
-        class="sidebar-nav-btn"
-        :class="{ active: currentView === 'summary' }"
-        @click="navigate('summary')"
-      >
-        <svg viewBox="0 0 24 24">
-          <rect x="3" y="3" width="7" height="7"/>
-          <rect x="14" y="3" width="7" height="7"/>
-          <rect x="14" y="14" width="7" height="7"/>
-          <rect x="3" y="14" width="7" height="7"/>
-        </svg>
-        Riepilogo giornata
-      </button>
+    <!-- ── Navigation ─────────────────────────────────────────────── -->
+    <nav class="sb-nav">
 
-      <button
-        class="sidebar-nav-btn"
-        :class="{ active: currentView === 'dashboard' }"
-        @click="navigate('dashboard')"
-      >
-        <svg viewBox="0 0 24 24">
-          <line x1="18" y1="20" x2="18" y2="10"/>
-          <line x1="12" y1="20" x2="12" y2="4"/>
-          <line x1="6"  y1="20" x2="6"  y2="14"/>
-        </svg>
+      <button class="sb-nav-item" :class="{ active: currentView === 'dashboard' }" @click="navigate('dashboard')">
+        <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
         Dashboard
       </button>
 
-      <button
-        class="sidebar-nav-btn"
-        :class="{ active: currentView === 'planning' }"
-        @click="navigate('planning')"
-      >
-        <svg viewBox="0 0 24 24">
-          <rect x="3" y="4" width="18" height="18" rx="2"/>
-          <path d="M16 2v4M8 2v4M3 10h18"/>
-          <line x1="8" y1="14" x2="8" y2="14" stroke-linecap="round" stroke-width="2.5"/>
-          <line x1="12" y1="14" x2="16" y2="14"/>
-          <line x1="8" y1="18" x2="8" y2="18" stroke-linecap="round" stroke-width="2.5"/>
-          <line x1="12" y1="18" x2="16" y2="18"/>
-        </svg>
+      <button class="sb-nav-item" :class="{ active: currentView === 'summary' }" @click="navigate('summary')">
+        <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+        Lavorazioni
+        <span v-if="store.syncStatus.value === 'ok'" class="sb-badge sb-badge-live">live</span>
+      </button>
+
+      <button class="sb-nav-item sb-nav-disabled">
+        <svg viewBox="0 0 24 24"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
+        Live map
+      </button>
+
+      <button class="sb-nav-item" :class="{ active: currentView === 'planning' }" @click="navigate('planning')">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
         Pianificazione
+      </button>
+
+      <button class="sb-nav-item sb-nav-disabled">
+        <svg viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
+        Squadre
+      </button>
+
+      <button class="sb-nav-item sb-nav-disabled">
+        <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        Report
       </button>
 
     </nav>
 
-    <!-- Bottom: sync + workspace + utente ────────────────────────── -->
-    <div class="sidebar-bottom">
-
-      <!-- Stato connessione Firestore (solo indicatore, nessuna azione manuale) -->
-      <div class="sidebar-sync-status">
-        <svg viewBox="0 0 24 24">
-          <polyline points="23 4 23 10 17 10"/>
-          <polyline points="1 20 1 14 7 14"/>
-          <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-        </svg>
-        <span v-if="store.syncStatus.value === 'syncing'">Connessione…</span>
-        <span v-else-if="store.syncStatus.value === 'error'" class="sync-err">Errore connessione</span>
-        <span v-else>Sincronizzazione live</span>
-        <span class="sync-badge" :class="store.syncStatus.value" />
-      </div>
-
-      <!-- Workspace ───────────────────────────────────────────────── -->
-      <button class="sidebar-nav-btn sidebar-ws-btn" @click="openWorkspaceModal">
-        <svg viewBox="0 0 24 24">
-          <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
-          <circle cx="9" cy="7" r="4"/>
-          <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
-        </svg>
-        <span class="sidebar-ws-name">
-          {{ appState.activeWorkspaceName.value || 'Workspace' }}
-        </span>
+    <!-- ── Workspace section ──────────────────────────────────────── -->
+    <div class="sb-section-label">WORKSPACE</div>
+    <div class="sb-workspace-items">
+      <button class="sb-nav-item" @click="openWorkspaceModal">
+        <svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        Priorità urgenti
       </button>
-
-      <!-- Utente loggato ──────────────────────────────────────────── -->
-      <div v-if="auth.currentUser.value" class="sidebar-user">
-        <div class="sidebar-user-avatar">
-          <img
-            v-if="auth.currentUser.value.photoURL"
-            :src="auth.currentUser.value.photoURL"
-            :alt="auth.currentUser.value.displayName"
-            referrerpolicy="no-referrer"
-          />
-          <span v-else>{{ auth.currentUser.value.displayName[0]?.toUpperCase() }}</span>
-        </div>
-        <div class="sidebar-user-info">
-          <div class="sidebar-user-name">{{ auth.currentUser.value.displayName }}</div>
-          <div class="sidebar-user-email">{{ auth.currentUser.value.email }}</div>
-        </div>
-        <button class="sidebar-logout-btn" @click="handleLogout" title="Esci">
-          <svg viewBox="0 0 24 24">
-            <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
-            <polyline points="16 17 21 12 16 7"/>
-            <line x1="21" y1="12" x2="9" y2="12"/>
-          </svg>
-        </button>
-      </div>
-
+      <button class="sb-nav-item sb-nav-disabled">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        Ritardi
+      </button>
+      <button class="sb-nav-item sb-nav-disabled">
+        <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+        Esportazioni
+      </button>
     </div>
 
-    <div class="sidebar-version">v3.1 · PosaTrack · Firebase</div>
+    <div class="sb-spacer" />
+
+    <!-- ── Sync status ─────────────────────────────────────────────── -->
+    <div class="sb-sync">
+      <span class="sb-sync-dot" :class="store.syncStatus.value" />
+      <span class="sb-sync-text">
+        <template v-if="store.syncStatus.value === 'syncing'">Connessione…</template>
+        <template v-else-if="store.syncStatus.value === 'error'">Errore sync</template>
+        <template v-else>Sync live attivo</template>
+      </span>
+    </div>
+
+    <!-- ── User / workspace footer ───────────────────────────────── -->
+    <div class="sb-user" v-if="auth.currentUser.value">
+      <div class="sb-user-avatar">
+        <img v-if="auth.currentUser.value.photoURL"
+             :src="auth.currentUser.value.photoURL"
+             :alt="userDisplayName"
+             referrerpolicy="no-referrer" />
+        <span v-else>{{ userInitials }}</span>
+      </div>
+      <div class="sb-user-info">
+        <div class="sb-user-name">{{ userDisplayName }}</div>
+        <div class="sb-user-ws">{{ workspaceName }}</div>
+      </div>
+      <button class="sb-user-settings" @click="openWorkspaceModal" title="Impostazioni workspace">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+      </button>
+    </div>
 
   </aside>
 </template>
@@ -166,139 +145,217 @@ async function handleLogout(): Promise<void> {
   top: 0;
   height: 100vh;
   overflow-y: auto;
+  overflow-x: hidden;
 }
 
-.sidebar-brand {
-  padding: 28px 20px 22px;
+// ── Brand ─────────────────────────────────────────────────────────────
+.sb-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 16px 14px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
 
-.sidebar-brand-name {
-  font-family: 'Barlow Condensed', sans-serif;
-  font-size: 30px;
-  font-weight: 900;
-  color: var(--orange);
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  line-height: 1;
-}
-
-.sidebar-brand-sub {
-  font-size: 11px;
-  color: var(--muted);
-  margin-top: 4px;
-  letter-spacing: .4px;
-}
-
-.sidebar-nav {
-  display: flex;
-  flex-direction: column;
-  padding: 14px 10px;
-  gap: 3px;
-  flex: 1;
-}
-
-.sidebar-nav-btn {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  padding: 11px 14px;
-  border-radius: 10px;
-  cursor: pointer;
-  border: none;
-  background: transparent;
-  color: var(--muted);
-  font-family: 'DM Sans', sans-serif;
+.sb-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: var(--primary);
+  color: #fff;
   font-size: 14px;
-  font-weight: 500;
-  transition: background .12s, color .12s;
-  text-align: left;
-  width: 100%;
-
-  &:hover { background: var(--surface2); color: var(--text); }
-
-  &.active {
-    background: rgba(255, 95, 0, .13);
-    color: var(--orange);
-    font-weight: 600;
-  }
-
-  svg {
-    width: 18px; height: 18px;
-    stroke: currentColor; fill: none;
-    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
-    flex-shrink: 0;
-  }
-}
-
-.sidebar-bottom {
-  padding: 10px 10px 6px;
-  border-top: 1px solid var(--border);
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-// ── Sync button ──────────────────────────────────────────────────────
-.sidebar-sync-status {
+  font-weight: 800;
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 9px 14px;
-  border-radius: 10px;
-  color: var(--dim);
-  font-family: 'DM Sans', sans-serif;
-  font-size: 13px;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.sb-brand-name {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.sb-search-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  color: var(--muted);
+  border-radius: var(--radius-xs);
+  transition: color .12s, background .12s;
+
+  &:hover { color: var(--ink); background: var(--surface-2); }
 
   svg {
     width: 15px; height: 15px;
     stroke: currentColor; fill: none;
     stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
-    flex-shrink: 0;
   }
-
-  .sync-err { color: var(--red); }
 }
 
-.sync-badge {
-  width: 7px; height: 7px;
-  border-radius: 50%;
-  margin-left: auto;
-  flex-shrink: 0;
-  background: var(--dim);
-
-  &.ok      { background: var(--green);  }
-  &.error   { background: var(--red);    }
-  &.syncing { background: var(--orange); animation: blink 1s infinite; }
-  &.idle    { background: var(--dim);    }
+// ── CTA ───────────────────────────────────────────────────────────────
+.sb-cta-wrap {
+  padding: 12px 12px 8px;
 }
 
-// ── Workspace button ─────────────────────────────────────────────────
-.sidebar-ws-name {
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.sb-cta-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 14px;
+  background: var(--primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--ff);
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  transition: filter .12s;
+
+  &:hover   { filter: brightness(1.1); }
+  &:active  { filter: brightness(.9); }
+
+  svg {
+    width: 14px; height: 14px;
+    stroke: currentColor; fill: none;
+    stroke-width: 2.5; stroke-linecap: round;
+  }
 }
 
-// ── User row ─────────────────────────────────────────────────────────
-.sidebar-user {
+// ── Navigation ────────────────────────────────────────────────────────
+.sb-nav {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 8px;
+  gap: 1px;
+}
+
+.sb-nav-item {
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 10px 14px;
-  margin-top: 4px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--ff);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background .12s, color .12s;
+  text-align: left;
+  width: 100%;
+
+  &:hover { background: var(--surface-2); color: var(--ink); }
+
+  &.active {
+    background: var(--primary-soft);
+    color: var(--primary-ink);
+    font-weight: 600;
+  }
+
+  svg {
+    width: 16px; height: 16px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+    flex-shrink: 0;
+  }
+}
+
+.sb-nav-disabled {
+  opacity: .45;
+  cursor: default;
+  pointer-events: none;
+}
+
+.sb-badge {
+  margin-left: auto;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .5px;
+}
+
+.sb-badge-live {
+  background: var(--live-soft);
+  color: var(--live);
+}
+
+// ── Section label ─────────────────────────────────────────────────────
+.sb-section-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 12px 18px 4px;
+}
+
+.sb-workspace-items {
+  display: flex;
+  flex-direction: column;
+  padding: 0 8px;
+  gap: 1px;
+}
+
+// ── Spacer ────────────────────────────────────────────────────────────
+.sb-spacer { flex: 1; }
+
+// ── Sync ──────────────────────────────────────────────────────────────
+.sb-sync {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+}
+
+.sb-sync-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+
+  &.ok      { background: var(--ok); }
+  &.error   { background: var(--err); }
+  &.syncing { background: var(--live); animation: blink 1s infinite; }
+  &.idle    { background: var(--muted); }
+}
+
+.sb-sync-text {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+// ── User footer ───────────────────────────────────────────────────────
+.sb-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px 14px;
   border-top: 1px solid var(--border);
 }
 
-.sidebar-user-avatar {
-  width: 32px; height: 32px;
+.sb-user-avatar {
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
-  background: rgba(255,95,0,.2);
-  color: var(--orange);
-  font-size: 14px;
+  background: var(--primary-soft);
+  color: var(--primary-ink);
+  font-size: 11px;
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -309,50 +366,43 @@ async function handleLogout(): Promise<void> {
   img { width: 100%; height: 100%; object-fit: cover; }
 }
 
-.sidebar-user-info {
+.sb-user-info {
   flex: 1;
   overflow: hidden;
 }
 
-.sidebar-user-name {
-  font-size: 13px;
+.sb-user-name {
+  font-size: 12px;
   font-weight: 600;
-  color: var(--text);
+  color: var(--ink);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.sidebar-user-email {
-  font-size: 11px;
-  color: var(--dim);
+.sb-user-ws {
+  font-size: 10px;
+  color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.sidebar-logout-btn {
-  width: 28px; height: 28px;
+.sb-user-settings {
+  width: 26px; height: 26px;
   border: none; background: transparent; cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  border-radius: var(--r-sm);
+  border-radius: var(--radius-xs);
   color: var(--muted);
   transition: color .12s, background .12s;
   flex-shrink: 0;
 
-  &:hover { color: var(--red); background: rgba(239,68,68,.1); }
+  &:hover { color: var(--ink); background: var(--surface-2); }
 
   svg {
-    width: 15px; height: 15px;
+    width: 13px; height: 13px;
     stroke: currentColor; fill: none;
     stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
   }
-}
-
-.sidebar-version {
-  padding: 10px 20px 14px;
-  font-size: 11px;
-  color: var(--dim);
-  flex-shrink: 0;
 }
 </style>

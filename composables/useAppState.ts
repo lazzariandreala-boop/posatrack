@@ -96,20 +96,23 @@ const hasOngoing = computed(() => currentActivity.value !== null)
 // METODI
 // ─────────────────────────────────────────────────────────────────────────────
 
+const MOBILE_VIEWS: ViewName[] = ['timer', 'summary', 'map', 'profile']
+
 /**
  * Naviga alla vista specificata.
- * Su mobile viene ignorata qualunque navigazione diversa da "timer".
+ * Su mobile sono disponibili solo: timer, summary, map, profile.
+ * Su desktop sono disponibili tutte le viste.
  */
 function navigate(view: ViewName): void {
-  if (!isDesktop.value && view !== 'timer') return
+  if (!isDesktop.value && !MOBILE_VIEWS.includes(view)) return
   currentView.value = view
 }
 
 /** Aggiorna il flag isDesktop in base alla larghezza viewport. */
 function updateLayout(): void {
   isDesktop.value = window.innerWidth >= 800
-  // Su mobile: se si era su summary/dashboard, torna al timer
-  if (!isDesktop.value && currentView.value !== 'timer') {
+  // Su mobile: se si era su dashboard/planning, torna a timer
+  if (!isDesktop.value && !MOBILE_VIEWS.includes(currentView.value)) {
     currentView.value = 'timer'
   }
 }

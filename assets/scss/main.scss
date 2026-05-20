@@ -1,71 +1,133 @@
 // ============================================================
 // POSATRACK – Stili globali
 // ============================================================
-// Questo file contiene:
-//   1. Design Tokens (variabili CSS custom)
-//   2. Reset & Base
-//   3. App Shell (struttura layout)
-//   4. Bottom Navigation (mobile)
-//   5. Desktop layout (@media ≥ 800px)
-//   6. Componenti comuni (card, btn, form, slabel, empty, page-header)
-//   7. Animazioni globali (fadeUp, blink, spin)
-//
-// Il CSS specifico di ogni vista/componente è in <style scoped>
-// nei rispettivi file .vue.
+// 1. Design Tokens (variabili CSS custom – dark default, light override)
+// 2. Reset & Base
+// 3. App Shell (struttura layout)
+// 4. Bottom Navigation (mobile)
+// 5. Desktop layout (@media ≥ 800px)
+// 6. Componenti comuni (card, btn, badge, form, empty)
+// 7. Animazioni globali
 // ============================================================
 
 
-// ──────────────────────────────────────────────────────────────────────────────
-// 1. DESIGN TOKENS – variabili CSS custom globali
-//    Modifica questi valori per cambiare l'aspetto dell'intera app.
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. DESIGN TOKENS
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Dark theme (default – mobile field workers)
 :root {
-  // Sfondi – scala di grigio scuro
-  --bg:        #111111;   // sfondo principale della pagina
-  --surface:   #1C1C1C;   // card, sidebar, elementi elevati
-  --surface2:  #242424;   // input, sfondi interni alle card
-  --surface3:  #2E2E2E;   // hover states, elementi ancora più interni
+  // Superfici
+  --bg:            #131312;
+  --surface:       #1D1C1A;
+  --surface-2:     #252320;
+  --surface-3:     #2E2C28;
 
   // Bordi
-  --border:    #2E2E2E;   // bordi principali
-  --border2:   #3A3A3A;   // bordi secondari, più evidenti
+  --border:        #2A2826;
+  --border-strong: #383530;
+
+  // Testo
+  --ink:           #F0EFE9;
+  --ink-2:         #C8C5BC;
+  --muted:         #6B6963;
+  --muted-2:       #93908A;
 
   // Colori semantici
-  --orange:    #FF5F00;   // colore brand primario – azioni, accenti
-  --orange-d:  #CC4C00;   // orange scuro – hover
-  --yellow:    #F5B800;   // pausa pranzo
-  --green:     #22C55E;   // GPS OK, successo
-  --red:       #EF4444;   // stop, errore, elimina
-  --blue:      #3D8EE0;   // trasferimento
-  --purple:    #8B5CF6;   // attività generica
+  --primary:       #2D5BFF;
+  --primary-soft:  #1A2B5C;
+  --primary-ink:   #92AFFF;
+
+  --live:          #F5A524;
+  --live-soft:     #3D2900;
+  --live-ink:      #F5A524;
+
+  --ok:            #1F9D55;
+  --ok-soft:       #0B3622;
+  --ok-ink:        #4ADE80;
+
+  --err:           #DC2626;
+  --err-soft:      #3D0D0D;
+  --err-ink:       #F87171;
+
+  --warn:          #D97706;
+  --warn-soft:     #3D2200;
+  --warn-ink:      #FCD34D;
+
+  --info:          #2D5BFF;
+  --info-soft:     #1A2B5C;
+
+  // Raggi
+  --radius:        10px;
+  --radius-sm:      6px;
+  --radius-lg:     14px;
+  --radius-xl:     20px;
+  --radius-xs:      4px;
+
+  // Ombre
+  --shadow-1: 0 1px 2px rgba(0,0,0,.3);
+  --shadow-2: 0 4px 16px rgba(0,0,0,.4);
+  --shadow-3: 0 8px 32px rgba(0,0,0,.5);
 
   // Tipografia
-  --text:      #F0F0F0;   // testo principale
-  --muted:     #7A7A7A;   // testo secondario
-  --dim:       #404040;   // testo disabilitato, decorazioni sottili
-
-  // Raggi dei bordi
-  --r:         12px;      // card, modal
-  --r-sm:       8px;      // bottoni, input
-  --r-xs:       6px;      // pill, badge piccoli
+  --ff:      'Geist', -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+  --ff-mono: 'JetBrains Mono', ui-monospace, monospace;
 
   // Navigazione mobile
-  --nav-h:     62px;      // altezza bottom navigation bar
+  --nav-h:     64px;
 
-  // Safe areas per notch e home indicator (iOS)
-  --safe-b:    env(safe-area-inset-bottom, 0px);
-  --safe-t:    env(safe-area-inset-top,    0px);
-  --safe-l:    env(safe-area-inset-left,   0px);
-  --safe-r:    env(safe-area-inset-right,  0px);
+  // Safe areas (iOS notch / home indicator)
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-t: env(safe-area-inset-top,    0px);
+  --safe-l: env(safe-area-inset-left,   0px);
+  --safe-r: env(safe-area-inset-right,  0px);
 
-  // Larghezza sidebar desktop
+  // Sidebar desktop
   --sidebar-w: 240px;
 }
 
+// Light theme override (classe .light sul <html>)
+:root.light {
+  --bg:            #FAFAF7;
+  --surface:       #FFFFFF;
+  --surface-2:     #F4F3EE;
+  --surface-3:     #ECEAE3;
 
-// ──────────────────────────────────────────────────────────────────────────────
+  --border:        #E8E6DF;
+  --border-strong: #D7D4CB;
+
+  --ink:           #0D0D0B;
+  --ink-2:         #2C2B27;
+  --muted:         #6B6963;
+  --muted-2:       #93908A;
+
+  --primary-soft:  #E8EEFF;
+  --primary-ink:   #1F3DB0;
+
+  --live-soft:     #FEF2D9;
+  --live-ink:      #8A5A07;
+
+  --ok-soft:       #DEF4E5;
+  --ok-ink:        #166534;
+
+  --err-soft:      #FCE3E3;
+  --err-ink:       #991B1B;
+
+  --warn-soft:     #FCEAD0;
+  --warn-ink:      #92400E;
+
+  --info-soft:     #E8EEFF;
+
+  --shadow-1: 0 1px 2px rgba(20,18,12,.04), 0 1px 0 rgba(20,18,12,.04);
+  --shadow-2: 0 1px 2px rgba(20,18,12,.04), 0 4px 12px -2px rgba(20,18,12,.06);
+  --shadow-3: 0 8px 32px -8px rgba(20,18,12,.12), 0 2px 6px rgba(20,18,12,.05);
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 2. RESET & BASE
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -73,62 +135,57 @@
 }
 
 html {
-  -webkit-text-size-adjust: 100%; // previene zoom automatico su iOS landscape
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
   background: var(--bg);
-  color: var(--text);
-  font-family: 'DM Sans', sans-serif;
+  color: var(--ink);
+  font-family: var(--ff);
   font-size: 15px;
   line-height: 1.5;
-  -webkit-tap-highlight-color: transparent; // rimuove flash blu al tap su Android
-  // Su mobile lo scroll è sul body – il bottom nav è position:fixed e rimane fisso
+  -webkit-tap-highlight-color: transparent;
   padding-bottom: calc(var(--nav-h) + var(--safe-b) + 12px);
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────────
-// 3. APP SHELL – struttura base mobile
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. APP SHELL
+// ─────────────────────────────────────────────────────────────────────────────
+
 #app {
   display: flex;
   flex-direction: column;
 }
 
-// Su mobile #views-wrap scorre con il body, nessun overflow interno
 #views-wrap {
   flex: 1;
 }
 
-// Su mobile #timer-cols impila le colonne con gap
 #timer-cols {
   display: flex;
   flex-direction: column;
   gap: 14px;
 }
 
-// Singola vista/sezione (Timer, Riepilogo, Dashboard)
-// Tutte presenti nel DOM ma solo quella v-show="true" è visibile
 .view {
-  padding: 16px;
-  padding-top: calc(16px + var(--safe-t)); // rispetta notch/Dynamic Island
+  padding: 0;
   min-height: 100%;
   animation: fadeUp .18s ease;
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────────
-// 4. BOTTOM NAVIGATION – mobile only
-//    Barra fissa in fondo. Su mobile mostra SOLO il tab Timer.
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. BOTTOM NAVIGATION (mobile)
+// ─────────────────────────────────────────────────────────────────────────────
+
 #bottom-nav {
   position: fixed;
   bottom: 0;
   left: 0;
   right: 0;
   height: calc(var(--nav-h) + var(--safe-b));
-  padding-bottom: var(--safe-b); // safe area home indicator iOS
+  padding-bottom: var(--safe-b);
   background: var(--surface);
   border-top: 1px solid var(--border);
   display: flex;
@@ -136,56 +193,53 @@ body {
   z-index: 90;
 }
 
-// Singolo tab della bottom nav
 .nav-tab {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
+  gap: 4px;
   cursor: pointer;
   border: none;
   background: transparent;
-  color: var(--dim);
-  font-family: 'DM Sans', sans-serif;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: .5px;
-  text-transform: uppercase;
+  color: var(--muted);
+  font-family: var(--ff);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: .2px;
   transition: color .12s;
   padding: 8px 4px;
 
-  // Tab attivo: arancione
-  &.active { color: var(--orange); }
+  &.active {
+    color: var(--ink);
 
-  // Icona SVG: eredita il colore dal genitore
+    svg { stroke: var(--ink); }
+    .nav-tab-label { font-weight: 600; }
+  }
+
   svg {
     width: 22px;
     height: 22px;
     stroke: currentColor;
     fill: none;
-    stroke-width: 1.8;
+    stroke-width: 1.7;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // 5. LAYOUT DESKTOP (≥ 800px)
-//    Passa da flex colonna a flex riga: sidebar fissa a sinistra,
-//    area di contenuto a destra.
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
 @media (min-width: 800px) {
-  // Il body può scorrere verticalmente su desktop
-  // Desktop: body non scorre, lo scroll è su #views-wrap
   body {
     overflow: hidden;
-    padding-bottom: 0; // reset del padding mobile
+    padding-bottom: 0;
   }
 
-  // Struttura orizzontale: sidebar | contenuto
   #app {
     flex-direction: row;
     height: 100vh;
@@ -196,26 +250,16 @@ body {
     overflow-y: auto;
     overflow-x: hidden;
     min-height: 0;
-    padding-bottom: 32px;
     background: var(--bg);
-    // Pattern di punti sottile per differenziare visivamente dal sidebar
-    background-image: radial-gradient(var(--border) 1px, transparent 1px);
-    background-size: 32px 32px;
   }
 
-  // Le viste su desktop occupano tutta la larghezza.
-  // min-height: 0 evita lo scroll inutile quando il contenuto è breve:
-  // il background a puntini è su #views-wrap (riempie sempre tutta l'area).
   .view {
-    padding: 32px 36px 16px;
+    padding: 32px 36px 32px;
     min-height: 0;
   }
 
-  // Nasconde la bottom nav su desktop (si usa la sidebar)
   #bottom-nav { display: none; }
 
-  // ── Layout a 2 colonne vista Timer ──────────────────────────────────
-  // Card attività corrente (colonna sinistra, larghezza fissa)
   #timer-left-col {
     flex: 0 0 400px;
     display: flex;
@@ -223,113 +267,129 @@ body {
     gap: 14px;
   }
 
-  // Log attività + azioni (colonna destra, cresce)
   #timer-right-col {
     flex: 1;
     display: flex;
     flex-direction: column;
     gap: 14px;
-    min-width: 0; // previene overflow del flex item
+    min-width: 0;
   }
 
-  // Wrapper desktop per le due colonne del timer
   #timer-cols {
     display: flex;
-    flex-direction: row; // sovrascrive la versione mobile (column)
+    flex-direction: row;
     gap: 20px;
     align-items: flex-start;
   }
 
-  // ── Layout a 2 colonne vista Riepilogo ──────────────────────────────
-  // Riga superiore: mappa a sinistra, grafico a destra
   #summary-top-row {
     display: grid;
-    grid-template-columns: 1.4fr 1fr; // mappa più larga del grafico
+    grid-template-columns: 1.4fr 1fr;
     gap: 20px;
     align-items: start;
     margin-bottom: 16px;
   }
 
-  #map-wrap { height: 420px !important; } // mappa più alta su desktop
+  #map-wrap { height: 420px !important; }
   #summary-top-row .card { height: 420px; display: flex; flex-direction: column; }
   #summary-top-row .card .card-body { flex: 1; display: flex; flex-direction: column; overflow-y: auto; }
-
   #summary-bottom-row { width: 100%; }
 
-  // ── Layout a 2 colonne vista Dashboard ─────────────────────────────
   #dashboard-main-row {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 20px;
     align-items: start;
   }
-
   #dashboard-full-row { width: 100%; }
 
-  // Stats dashboard in 4 colonne su desktop
   .dash-stats-grid {
     grid-template-columns: repeat(4, 1fr) !important;
   }
 
-  // Grafico barre più alto su desktop
   #bar-chart-wrap { height: 220px !important; }
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────────
-// 6. COMPONENTI COMUNI – riusati in tutte le viste
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. COMPONENTI COMUNI
+// ─────────────────────────────────────────────────────────────────────────────
 
-// ── Page header (titolo + controlli opzionali) ───────────────────────────────
+// ── Page header ──────────────────────────────────────────────────────────────
 .page-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 22px;
   gap: 12px;
   flex-wrap: wrap;
 }
 
 .page-title {
-  font-family: 'Barlow Condensed', sans-serif;
-  font-size: 32px;
-  font-weight: 900;
-  text-transform: uppercase;
-  letter-spacing: .5px;
-  line-height: 1;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.2;
 }
 
-// ── Card container ───────────────────────────────────────────────────────────
+// ── Card container ────────────────────────────────────────────────────────────
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: var(--r);
+  border-radius: var(--radius);
   overflow: hidden;
 }
 
 .card-body { padding: 16px; }
 
-// ── Section label – testo piccolo sopra ogni sezione ────────────────────────
+// ── Section label ─────────────────────────────────────────────────────────────
 .slabel {
   font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 2px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
   text-transform: uppercase;
   color: var(--muted);
   margin-bottom: 10px;
 }
 
-// ── Pulsanti ─────────────────────────────────────────────────────────────────
+// ── Status badge ─────────────────────────────────────────────────────────────
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+
+  &::before {
+    content: '';
+    display: block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+}
+
+.badge-live     { background: var(--live-soft);    color: var(--live);    }
+.badge-ok       { background: var(--ok-soft);      color: var(--ok-ink);  }
+.badge-err      { background: var(--err-soft);     color: var(--err-ink); }
+.badge-warn     { background: var(--warn-soft);    color: var(--warn);    }
+.badge-primary  { background: var(--primary-soft); color: var(--primary-ink); }
+.badge-muted    { background: var(--surface-2);    color: var(--muted-2); }
+
+// ── Buttons ───────────────────────────────────────────────────────────────────
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   padding: 12px 20px;
-  border-radius: var(--r-sm);
+  border-radius: var(--radius-sm);
   border: none;
   cursor: pointer;
-  font-family: 'DM Sans', sans-serif;
+  font-family: var(--ff);
   font-size: 15px;
   font-weight: 600;
   transition: filter .12s, transform .1s;
@@ -339,12 +399,12 @@ body {
   &:active { transform: scale(.96); filter: brightness(.88); }
 }
 
-.btn-primary { background: var(--orange); color: #fff; }
-.btn-danger  { background: var(--red); color: #fff; width: 100%; font-size: 16px; padding: 16px; border-radius: var(--r); }
-.btn-ghost   { background: var(--surface2); color: var(--text); border: 1px solid var(--border2); }
-.btn-sm      { padding: 7px 13px; font-size: 13px; border-radius: var(--r-xs); }
+.btn-primary   { background: var(--primary);  color: #fff; }
+.btn-live      { background: var(--live);     color: #000; font-weight: 700; }
+.btn-danger    { background: var(--err);      color: #fff; width: 100%; font-size: 16px; padding: 16px; border-radius: var(--radius); }
+.btn-ghost     { background: var(--surface-2); color: var(--ink); border: 1px solid var(--border-strong); }
+.btn-sm        { padding: 7px 13px; font-size: 13px; border-radius: var(--radius-xs); }
 
-// Icona SVG all'interno di un bottone (sia come wrapper che come elemento diretto)
 .btn-icon svg,
 svg.btn-icon {
   width: 17px;
@@ -355,6 +415,26 @@ svg.btn-icon {
   stroke-linecap: round;
   stroke-linejoin: round;
 }
+
+// ── Avatar ────────────────────────────────────────────────────────────────────
+.avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+}
+
+.avatar-sm { width: 26px; height: 26px; font-size: 10px; }
+.avatar-lg { width: 40px; height: 40px; font-size: 14px; }
 
 // ── Form elements ─────────────────────────────────────────────────────────────
 label {
@@ -367,30 +447,28 @@ label {
   margin-bottom: 7px;
 }
 
-input, select {
+input, select, textarea {
   width: 100%;
   padding: 12px 14px;
-  background: var(--surface2);
-  border: 1px solid var(--border2);
-  border-radius: var(--r-sm);
-  color: var(--text);
-  font-family: 'DM Sans', sans-serif;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-family: var(--ff);
   font-size: 15px;
   outline: none;
   transition: border-color .15s;
-  -webkit-appearance: none; // rimuove stile nativo iOS per uniformità
+  -webkit-appearance: none;
 
-  &:focus        { border-color: var(--orange); }
-  &::placeholder { color: var(--dim); }
+  &:focus        { border-color: var(--primary); }
+  &::placeholder { color: var(--muted); }
 }
 
-// Le option della select ereditano lo sfondo scuro
-select option { background: var(--surface2); color: var(--text); }
+select option { background: var(--surface-2); color: var(--ink); }
 
 .form-group { margin-bottom: 14px; }
 
-// Classe aggiunta via JS quando un campo ha un errore di validazione
-.input-error { border-color: var(--red) !important; }
+.input-error { border-color: var(--err) !important; }
 
 // ── Empty state ───────────────────────────────────────────────────────────────
 .empty {
@@ -400,7 +478,7 @@ select option { background: var(--surface2); color: var(--text); }
   svg {
     width: 44px;
     height: 44px;
-    stroke: var(--dim);
+    stroke: var(--muted);
     fill: none;
     stroke-width: 1.4;
     display: block;
@@ -408,41 +486,47 @@ select option { background: var(--surface2); color: var(--text); }
   }
 
   h3 {
-    font-family: 'Barlow Condensed', sans-serif;
-    font-size: 18px;
-    font-weight: 800;
-    text-transform: uppercase;
-    color: var(--dim);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--muted);
     margin-bottom: 6px;
   }
 
-  p { font-size: 13px; color: var(--dim); }
+  p { font-size: 13px; color: var(--muted); }
+}
+
+// ── Divider ──────────────────────────────────────────────────────────────────
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 16px 0;
 }
 
 
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // 7. ANIMAZIONI GLOBALI
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
-// Comparsa dal basso con fade – usata per le viste
 @keyframes fadeUp {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 
-// Lampeggio del pallino GPS quando il segnale è acquisito
 @keyframes blink {
   0%, 100% { opacity: 1; }
   50%       { opacity: .3; }
 }
 
-// Rotazione continua – usata per lo spinner GPS
 @keyframes spin {
   to { transform: rotate(360deg); }
 }
 
-// Salita dal basso – usata per il modal bottom sheet
 @keyframes slideUp {
   from { transform: translateY(80px); opacity: 0; }
   to   { transform: translateY(0);    opacity: 1; }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: .5; }
 }
