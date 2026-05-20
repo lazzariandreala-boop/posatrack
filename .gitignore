@@ -1,15 +1,18 @@
-# Dependencies
+# Variabili d'ambiente
+.env
+.env.local
+.env.*
+.env.*.local
+!.env.example
+
+# Dipendenze
 node_modules/
 
 # Nuxt build output
 .nuxt/
 .output/
 .nitro/
-
-# Env files
-.env
-.env.*
-!.env.example
+dist/
 
 # Logs
 logs/
@@ -17,12 +20,13 @@ logs/
 
 # OS
 .DS_Store
+Thumbs.db
 *.Zone.Identifier
 
 # Editor
 .idea/
 .vscode/
+*.swp
 
 # Test coverage
 coverage/
-dist/

@@ -21,6 +21,7 @@ import { useGeo }       from '~/composables/useGeo'
 import { useExport }    from '~/composables/useExport'
 import { ACT }          from '~/constants'
 import type { Activity } from '~/types'
+import { photoSrc } from '~/types'
 
 const appState = useAppState()
 const store    = useStore()
@@ -270,7 +271,7 @@ function fmtTime(ts: number): string {
 function openLightbox(activityId: string, photoIndex: number): void {
   const activity = store.all().find(a => a.id === activityId)
   if (!activity?.photos?.[photoIndex]) return
-  appState.openLightbox(activity.photos[photoIndex].data)
+  appState.openLightbox(photoSrc(activity.photos[photoIndex]))
 }
 
 // ── Scontrini del giorno ──────────────────────────────────────────────
@@ -467,7 +468,7 @@ onUnmounted(() => {
                   v-for="(p, pi) in a.photos.slice(0, 8)"
                   :key="pi"
                   class="tl-photo"
-                  :src="p.data"
+                  :src="photoSrc(p)"
                   alt="Foto"
                   @click="openLightbox(a.id, pi)"
                 >
@@ -523,9 +524,9 @@ onUnmounted(() => {
                 v-for="(p, pi) in a.receiptPhotos"
                 :key="pi"
                 class="receipt-thumb"
-                :src="p.data"
+                :src="photoSrc(p)"
                 :alt="`Scontrino ${pi + 1}`"
-                @click="appState.openLightbox(p.data)"
+                @click="appState.openLightbox(photoSrc(p))"
               >
             </div>
           </div>
@@ -543,9 +544,9 @@ onUnmounted(() => {
               v-for="(p, pi) in sitePhotos"
               :key="pi"
               class="site-photo-thumb"
-              :src="p.data"
+              :src="photoSrc(p)"
               :alt="`Cantiere ${pi + 1}`"
-              @click="appState.openLightbox(p.data)"
+              @click="appState.openLightbox(photoSrc(p))"
             >
           </div>
         </div>

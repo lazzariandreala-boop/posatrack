@@ -1,5 +1,22 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
+  runtimeConfig: {
+    public: {
+      // Firebase
+      firebaseApiKey:            '',
+      firebaseAuthDomain:        '',
+      firebaseProjectId:         '',
+      firebaseStorageBucket:     '',
+      firebaseMessagingSenderId: '',
+      firebaseAppId:             '',
+      // Auth provider opzionale
+      microsoftClientId:         '',
+      // Cloudinary (upload immagini senza costi Firebase Storage)
+      cloudinaryCloudName:       '',
+      cloudinaryUploadPreset:    '',
+    },
+  },
+
   /**
    * SSR disabilitato: l'app usa localStorage e API browser-only (GPS, Canvas).
    * Viene servita come SPA pura (compatibile con Capacitor per build nativa).

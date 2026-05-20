@@ -189,7 +189,6 @@ async function doStop(endLocation: import('~/types').GpsLocation | null, endTime
 
   timer.stop()
   appState.currentActivity.value = null
-  store.syncNow()   // push al Gist solo allo stop
 }
 
 // ── Utility ─────────────────────────────────────────────────────────
