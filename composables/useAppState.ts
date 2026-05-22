@@ -74,6 +74,9 @@ const isGistSettingsOpen = ref(false)
 
 // ── Workspace ─────────────────────────────────────────────────────────────────
 
+/** ID del WorkOrder aperto nella vista dettaglio (null = nessuna vista dettaglio) */
+const selectedLavorazioneId = ref<string | null>(null)
+
 /** ID del workspace attivo (null = nessun workspace selezionato) */
 const activeWorkspaceId   = ref<string | null>(
   typeof localStorage !== 'undefined' ? localStorage.getItem('pt_workspace_id') : null
@@ -97,6 +100,7 @@ const hasOngoing = computed(() => currentActivity.value !== null)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MOBILE_VIEWS: ViewName[] = ['timer', 'summary', 'map', 'profile']
+const DESKTOP_ONLY_VIEWS: ViewName[] = ['dashboard', 'planning', 'lavorazione-detail']
 
 /**
  * Naviga alla vista specificata.
@@ -111,9 +115,13 @@ function navigate(view: ViewName): void {
 /** Aggiorna il flag isDesktop in base alla larghezza viewport. */
 function updateLayout(): void {
   isDesktop.value = window.innerWidth >= 800
-  // Su mobile: se si era su dashboard/planning, torna a timer
+  // Su mobile: se si era su una vista desktop-only, torna a timer
   if (!isDesktop.value && !MOBILE_VIEWS.includes(currentView.value)) {
     currentView.value = 'timer'
+  }
+  // Su desktop: la vista di default è dashboard, non timer
+  if (isDesktop.value && currentView.value === 'timer') {
+    currentView.value = 'dashboard'
   }
 }
 
@@ -199,6 +207,7 @@ export function useAppState() {
     // state
     currentView,
     currentActivity,
+    selectedLavorazioneId,
     isDesktop,
     isModalOpen,
     modalType,

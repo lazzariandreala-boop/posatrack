@@ -23,7 +23,7 @@ import { useTimer } from '~/composables/useTimer'
 import { usePhoto } from '~/composables/usePhoto'
 import { ACT } from '~/constants'
 import { DAYS_IT, MONTHS_SHORT } from '~/constants'
-import type { ActivityType } from '~/types'
+import type { ActivityType, WorkOrder } from '~/types'
 import { photoSrc } from '~/types'
 
 const appState = useAppState()
@@ -91,6 +91,7 @@ function openModal(type: ActivityType): void {
 
 /** Avvio diretto senza modal (es. Pausa Pranzo) */
 async function startDirectActivity(type: ActivityType, detail: string, note: string): Promise<void> {
+  if (appState.isGpsLoading.value) return
   appState.setGpsLoading(true)
   const location = await geo.get()
   const nowTs = Date.now()
@@ -133,14 +134,21 @@ async function startDirectActivity(type: ActivityType, detail: string, note: str
 // ── Stop attività ─────────────────────────────────────────────────────
 
 async function stopActivity(): Promise<void> {
-  if (!appState.currentActivity.value) return
+  let act = appState.currentActivity.value
+  if (!act) {
+    // Firestore sync may have reverted currentActivity to null — try store fallback
+    act = store.forDate(todayStr()).find(a => !a.endTime) ?? null
+    if (!act) return
+    appState.currentActivity.value = act
+    timer.start(act.startTime)
+  }
 
   appState.setGpsLoading(true)
   const location = await geo.get()
   const nowTs = Date.now()
-  const duration = Math.floor((nowTs - appState.currentActivity.value.startTime) / 1000)
+  const duration = Math.floor((nowTs - act.startTime) / 1000)
 
-  store.update(appState.currentActivity.value.id, {
+  store.update(act.id, {
     endTime: nowTs,
     endLoc: location,
     duration: duration,
@@ -388,6 +396,7 @@ function fmtEstimated(minutes: number): string {
  * e la imposta come attività corrente senza aprire il modal.
  */
 async function startPlannedActivity(a: import('~/types').Activity): Promise<void> {
+  if (appState.isGpsLoading.value) return
   appState.setGpsLoading(true)
   const location = await geo.get()
   const nowTs = Date.now()
@@ -425,8 +434,15 @@ onMounted(() => {
   updateClock()
   clockInterval = setInterval(updateClock, 1000)
 
-  // Ripristina un'eventuale attività in corso dopo un reload della pagina
-  const ongoing = store.getOngoing(todayStr())
+  // Ripristina un'eventuale attività in corso dopo un reload della pagina.
+  // Fallback extra: getOngoing esclude placeholder non avviati (isPlanned+duration=0),
+  // ma un sync Firestore può aver fatto tornare un'attività avviata a duration=0.
+  // forDate(...).find(!endTime) la trova comunque.
+  const today = todayStr()
+  let ongoing = store.getOngoing(today)
+  if (!ongoing) {
+    ongoing = store.forDate(today).find(a => !a.endTime) ?? null
+  }
   if (ongoing && !appState.currentActivity.value) {
     appState.currentActivity.value = ongoing
     timer.start(ongoing.startTime)
@@ -487,6 +503,122 @@ const userInitials = computed(() => {
   const name = auth.currentUser.value?.displayName || auth.currentUser.value?.email || 'U'
   return name.split(' ').map((n: string) => n[0]).join('').toUpperCase().slice(0, 2)
 })
+
+// ── Work orders oggi ──────────────────────────────────────────────────
+
+const myDisplayName = computed(() => auth.currentUser.value?.displayName || '')
+
+const todayWorkOrders = computed<WorkOrder[]>(() => {
+  const all = store.getWorkOrdersForDate(todayStr())
+    .slice()
+    .sort((a, b) => (a.startHour ?? '99:99').localeCompare(b.startHour ?? '99:99'))
+  const name = myDisplayName.value
+  if (name) {
+    const mine = all.filter(wo => wo.squadra?.includes(name))
+    if (mine.length > 0) return mine
+  }
+  return all
+})
+
+function getWoLinkedActivities(wo: WorkOrder) {
+  return store.all().filter(a =>
+    a.workOrderId === wo.id ||
+    (wo.orderNumber && a.orderNumber === wo.orderNumber && a.date === wo.date)
+  )
+}
+
+function getWoLiveActivity(wo: WorkOrder) {
+  return store.all().find(a =>
+    !a.endTime && (
+      a.workOrderId === wo.id ||
+      (wo.orderNumber && a.orderNumber === wo.orderNumber && a.date === wo.date)
+    )
+  ) ?? null
+}
+
+function getWoPlannedActivity(wo: WorkOrder) {
+  return store.all().find(a =>
+    a.isPlanned && !a.endTime &&
+    (a.workOrderId === wo.id ||
+     (wo.orderNumber && a.orderNumber === wo.orderNumber && a.date === wo.date))
+  ) ?? null
+}
+
+type WoDisplayStatus = 'assegnato' | 'in_viaggio' | 'in_corso' | 'completato'
+
+function getWoDisplayStatus(wo: WorkOrder): WoDisplayStatus {
+  const linked = getWoLinkedActivities(wo)
+  const live = linked.find(a => !a.endTime)
+  if (live) return live.type === 'trasferimento' ? 'in_viaggio' : 'in_corso'
+  if (wo.statoManuale === 'completato') return 'completato'
+  return 'assegnato'
+}
+
+const pendingReopenWoId = ref<string | null>(null)
+
+function confirmReopen(): void {
+  const id = pendingReopenWoId.value
+  if (!id) return
+  pendingReopenWoId.value = null
+  store.updateWorkOrder(id, { statoManuale: undefined })
+  appState.showToast('Lavorazione riaperta')
+}
+
+function markWoComplete(wo: WorkOrder): void {
+  store.updateWorkOrder(wo.id, { statoManuale: 'completato' })
+  appState.showToast('Lavorazione segnata come completata')
+}
+
+async function startActivityForWo(wo: WorkOrder, type: ActivityType): Promise<void> {
+  if (appState.isGpsLoading.value) return
+  appState.setGpsLoading(true)
+  const location = await geo.get()
+  const nowTs = Date.now()
+  const today = todayStr()
+  if (appState.currentActivity.value) {
+    const duration = Math.floor((nowTs - appState.currentActivity.value.startTime) / 1000)
+    store.update(appState.currentActivity.value.id, { endTime: nowTs, endLoc: location, duration })
+    timer.stop()
+    appState.currentActivity.value = null
+  }
+  const activity = {
+    id: `act_${nowTs}`,
+    type,
+    detail: wo.detail,
+    note: '',
+    date: today,
+    startTime: nowTs,
+    endTime: null,
+    startLoc: location,
+    endLoc: null,
+    duration: null,
+    photos: [],
+    orderNumber: wo.orderNumber || undefined,
+    workOrderId: wo.id,
+  }
+  store.add(activity)
+  appState.currentActivity.value = activity
+  appState.setGpsLoading(false)
+  timer.start(nowTs)
+  appState.showToast(`▶ ${ACT[type]?.label} avviata`)
+}
+
+async function startWoWork(wo: WorkOrder): Promise<void> {
+  const planned = getWoPlannedActivity(wo)
+  if (planned) await startPlannedActivity(planned)
+  else await startActivityForWo(wo, wo.type)
+}
+
+async function startWoTransfer(wo: WorkOrder): Promise<void> {
+  await startActivityForWo(wo, 'trasferimento')
+}
+
+function getWoElapsed(wo: WorkOrder): string {
+  const live = getWoLiveActivity(wo)
+  if (!live) return ''
+  const secs = Math.floor((Date.now() - live.startTime) / 1000)
+  return fmtDur(secs)
+}
 </script>
 
 <template>
@@ -622,11 +754,16 @@ const userInitials = computed(() => {
       <div class="oggi-timer-display">00:00:00</div>
       <div class="oggi-timer-hint">Inizia una sessione per iniziare a tracciare</div>
 
-      <!-- CTA principale: Avvia trasferimento -->
-      <button class="oggi-btn-primary" @click="openModal('trasferimento')">
-        <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/></svg>
-        Avvia trasferimento
-      </button>
+      <!-- CTA principale: Avvia Posa (75%) + Trasf. (25%) -->
+      <div class="oggi-primary-row">
+        <button class="oggi-btn-primary" @click="openModal('posa')">
+          <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/></svg>
+          Avvia Posa
+        </button>
+        <button class="oggi-btn-transfer-cta" @click="openModal('trasferimento')">
+          🚛 Trasf.
+        </button>
+      </div>
 
       <!-- Azioni secondarie: Posa + Pausa -->
       <div class="oggi-btn-row">
@@ -644,94 +781,143 @@ const userInitials = computed(() => {
         </button>
       </div>
 
-      <!-- Prossimo cantiere (se ci sono attività pianificate) -->
-      <div v-if="nextPlanned" class="oggi-section">
-        <div class="oggi-section-label">PROSSIMO CANTIERE</div>
-        <div class="oggi-job-card">
-          <div class="oggi-job-header">
-            <div class="oggi-job-badges">
-              <span class="badge badge-primary">Assegnato</span>
-            </div>
-            <span class="oggi-job-code">{{ nextPlanned.orderNumber || '—' }}</span>
-          </div>
-          <div class="oggi-job-name">{{ nextPlanned.detail }}</div>
-          <div class="oggi-job-meta">
-            <span>
-              <svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
-              {{ ACT[nextPlanned.type]?.label ?? nextPlanned.type }}
-            </span>
-            <template v-if="nextPlanned.workOrderId && woEstimatedTimeMap.get(nextPlanned.workOrderId)">
-              <span>
-                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-                stima {{ fmtEstimated(woEstimatedTimeMap.get(nextPlanned.workOrderId)!) }}
-              </span>
-            </template>
-          </div>
-          <div class="oggi-job-actions">
-            <button class="oggi-job-btn-ghost" @click="deleteActivity(nextPlanned.id)">Rimuovi</button>
-            <button class="oggi-job-btn-primary" @click="startPlannedActivity(nextPlanned)">
-              <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/></svg>
-              Avvia
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Schedule oggi -->
-      <div v-if="todayActivities.length || plannedTodayActivities.length" class="oggi-section">
+      <!-- LE TUE ATTIVITÀ DI OGGI -->
+      <div class="oggi-section">
         <div class="oggi-section-header">
-          <div class="oggi-section-label">OGGI · {{ todayActivities.length + plannedTodayActivities.length }} ATTIVITÀ</div>
-          <div class="oggi-section-dur">
-            {{ todayActivities.reduce((s, a) => s + (a.duration ?? 0), 0) > 0
-              ? fmtDur(todayActivities.reduce((s, a) => s + (a.duration ?? 0), 0))
-              : '' }}
-          </div>
+          <div class="oggi-section-label">LE TUE ATTIVITÀ DI OGGI</div>
+          <div v-if="todayWorkOrders.length" class="oggi-section-dur">{{ todayWorkOrders.length }} lavorazion{{ todayWorkOrders.length === 1 ? 'e' : 'i' }}</div>
         </div>
 
-        <!-- Attività completate -->
-        <div v-for="(a, i) in todayActivities" :key="a.id" class="oggi-schedule-item">
-          <div class="oggi-sched-marker done">
-            <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-          </div>
-          <div class="oggi-sched-body">
-            <div class="oggi-sched-time">{{ fmtTime(a.startTime) }}</div>
-            <div class="oggi-sched-name">{{ a.detail }}</div>
-            <div class="oggi-sched-sub">{{ ACT[a.type]?.label ?? a.type }}
-              <template v-if="a.duration"> · {{ fmtDur(a.duration) }}</template>
+        <!-- Lista work order del giorno -->
+        <div v-if="todayWorkOrders.length" class="wo-card-list">
+          <div
+            v-for="wo in todayWorkOrders"
+            :key="wo.id"
+            class="wo-card"
+            :class="{
+              'wo-card-live':      getWoDisplayStatus(wo) === 'in_corso',
+              'wo-card-travel':    getWoDisplayStatus(wo) === 'in_viaggio',
+              'wo-card-done':      getWoDisplayStatus(wo) === 'completato',
+            }"
+          >
+            <!-- Header card: badge status + codice -->
+            <div class="wo-card-header">
+              <span
+                class="wo-status-badge"
+                :class="{
+                  'wo-badge-live':    getWoDisplayStatus(wo) === 'in_corso',
+                  'wo-badge-travel':  getWoDisplayStatus(wo) === 'in_viaggio',
+                  'wo-badge-done':    getWoDisplayStatus(wo) === 'completato',
+                  'wo-badge-idle':    getWoDisplayStatus(wo) === 'assegnato',
+                }"
+              >
+                <span class="wo-badge-dot" />
+                {{ getWoDisplayStatus(wo) === 'assegnato'  ? 'Assegnato'
+                  : getWoDisplayStatus(wo) === 'in_viaggio' ? 'In viaggio'
+                  : getWoDisplayStatus(wo) === 'in_corso'   ? 'In corso'
+                  : 'Completato' }}
+              </span>
+              <span v-if="wo.orderNumber" class="wo-card-code">{{ wo.orderNumber }}</span>
             </div>
-          </div>
-          <div class="oggi-sched-actions">
-            <button class="sched-action-btn" @click="triggerPhotoCapture(a.id)">
-              <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
-            </button>
-            <button class="sched-action-btn sched-delete" @click="deleteActivity(a.id)">
-              <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
-            </button>
-          </div>
-        </div>
 
-        <!-- Attività pianificate -->
-        <div v-for="(a, i) in plannedTodayActivities" :key="a.id" class="oggi-schedule-item oggi-sched-planned">
-          <div class="oggi-sched-marker planned">{{ todayActivities.length + i + 1 }}</div>
-          <div class="oggi-sched-body">
-            <div class="oggi-sched-name">{{ a.detail }}</div>
-            <div class="oggi-sched-sub">{{ ACT[a.type]?.label ?? a.type }}
-              <template v-if="a.workOrderId && woEstimatedTimeMap.get(a.workOrderId)">
-                · {{ fmtEstimated(woEstimatedTimeMap.get(a.workOrderId)!) }}
+            <!-- Nome lavorazione -->
+            <div class="wo-card-name">{{ wo.detail }}</div>
+
+            <!-- Meta: tipo + ora + stima -->
+            <div class="wo-card-meta">
+              <span v-if="wo.startHour">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                {{ wo.startHour }}
+              </span>
+              <span>
+                <svg viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                {{ ACT[wo.type]?.label ?? wo.type }}
+              </span>
+              <span v-if="wo.estimatedTime">
+                <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                ~{{ fmtEstimated(wo.estimatedTime) }}
+              </span>
+              <!-- Elapsed timer se in corso -->
+              <span v-if="getWoDisplayStatus(wo) === 'in_corso'" class="wo-elapsed">
+                {{ getWoElapsed(wo) }}
+              </span>
+            </div>
+
+            <!-- CTA in base allo status -->
+            <div class="wo-card-footer">
+
+              <!-- ── Assegnato: Avvia lavoro (75%) + Trasferimento (25%) ── -->
+              <template v-if="getWoDisplayStatus(wo) === 'assegnato'">
+                <button class="wo-cta wo-cta-primary wo-cta-main" @click="startWoWork(wo)">
+                  <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/></svg>
+                  Avvia {{ ACT[wo.type]?.label ?? 'attività' }}
+                </button>
+                <button class="wo-cta wo-cta-transfer" @click="startWoTransfer(wo)">
+                  <svg viewBox="0 0 24 24"><rect x="1" y="3" width="15" height="13"/><polygon points="16 8 20 8 23 11 23 16 16 16 16 8"/><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="18.5" r="2.5"/></svg>
+                  Trasferimento
+                </button>
               </template>
+
+              <!-- ── In viaggio: Avvia lavoro (75%) + Stop transfer (25%) ── -->
+              <template v-else-if="getWoDisplayStatus(wo) === 'in_viaggio'">
+                <button class="wo-cta wo-cta-primary wo-cta-main" @click="startWoWork(wo)">
+                  <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/></svg>
+                  Avvia {{ ACT[wo.type]?.label ?? 'attività' }}
+                </button>
+                <button class="wo-cta wo-cta-transfer wo-cta-transfer-live" @click="stopActivity">
+                  <span class="wo-transfer-pulse" />
+                  Stop
+                </button>
+              </template>
+
+              <!-- ── In corso: Termina ── -->
+              <template v-else-if="getWoDisplayStatus(wo) === 'in_corso'">
+                <button class="wo-cta wo-cta-stop" @click="stopActivity">
+                  <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+                  Termina
+                </button>
+              </template>
+
+              <!-- ── Completato: grayed, no CTA ── -->
+              <button v-else class="wo-cta wo-cta-done" disabled>
+                <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+                Completato
+              </button>
+
+              <!-- Link Maps se disponibile -->
+              <a
+                v-if="wo.mapsLink && getWoDisplayStatus(wo) !== 'completato'"
+                :href="wo.mapsLink"
+                target="_blank"
+                rel="noopener"
+                class="wo-maps-btn"
+              >
+                <svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+              </a>
+            </div>
+
+            <!-- "Segna come completato" — solo per le card assegnate -->
+            <div v-if="getWoDisplayStatus(wo) === 'assegnato'" class="wo-complete-row">
+              <button class="wo-complete-link" @click="markWoComplete(wo)">
+                ✓ Segna come completato
+              </button>
+            </div>
+
+            <!-- "Annulla completamento" — solo per le card completate -->
+            <div v-if="getWoDisplayStatus(wo) === 'completato'" class="wo-reopen-row">
+              <button class="wo-reopen-link" @click="pendingReopenWoId = wo.id">
+                Annulla completamento
+              </button>
             </div>
           </div>
-          <button class="sched-start-btn" @click="startPlannedActivity(a)">
-            <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3" fill="currentColor" stroke="none"/></svg>
-          </button>
         </div>
-      </div>
 
-      <!-- Empty state quando non ci sono attività -->
-      <div v-if="!todayActivities.length && !plannedTodayActivities.length" class="oggi-empty">
-        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-        <div class="oggi-empty-title">Giornata libera</div>
-        <div class="oggi-empty-sub">Nessuna attività pianificata per oggi</div>
+        <!-- Empty state: nessun WO oggi -->
+        <div v-else class="oggi-empty">
+          <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <div class="oggi-empty-title">Giornata libera</div>
+          <div class="oggi-empty-sub">Nessuna lavorazione pianificata per oggi</div>
+        </div>
       </div>
 
       <!-- Costi (collassati in fondo) -->
@@ -792,6 +978,17 @@ const userInitials = computed(() => {
         <div class="confirm-actions">
           <button class="confirm-btn cancel-btn" @click="cancelDelete">Annulla</button>
           <button class="confirm-btn delete-confirm-btn" @click="confirmDelete">Elimina</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Popup conferma riapertura lavorazione -->
+    <div v-if="pendingReopenWoId" class="confirm-overlay" @click.self="pendingReopenWoId = null">
+      <div class="confirm-dialog">
+        <p class="confirm-msg">Vuoi riaprire questa lavorazione?<br><span class="confirm-sub">Lo stato tornerà ad "Assegnato".</span></p>
+        <div class="confirm-actions">
+          <button class="confirm-btn cancel-btn" @click="pendingReopenWoId = null">Annulla</button>
+          <button class="confirm-btn reopen-confirm-btn" @click="confirmReopen">Riapri</button>
         </div>
       </div>
     </div>
@@ -889,13 +1086,19 @@ const userInitials = computed(() => {
 }
 
 // ── CTA primary ──────────────────────────────────────────────────────
+.oggi-primary-row {
+  display: flex;
+  gap: 10px;
+  margin: 0 20px 12px;
+}
+
 .oggi-btn-primary {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 10px;
-  margin: 0 20px 12px;
-  padding: 18px 20px;
+  flex: 3;
+  padding: 18px 12px;
   background: var(--live);
   border: none;
   border-radius: var(--radius);
@@ -915,6 +1118,25 @@ const userInitials = computed(() => {
     stroke: none;
     flex-shrink: 0;
   }
+}
+
+.oggi-btn-transfer-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 18px 8px;
+  background: rgba(45,91,255,.12);
+  border: 1px solid rgba(45,91,255,.3);
+  border-radius: var(--radius);
+  font-family: var(--ff);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+  cursor: pointer;
+  transition: background .12s, transform .1s;
+
+  &:active { transform: scale(.97); background: rgba(45,91,255,.22); }
 }
 
 // ── Secondary actions row ────────────────────────────────────────────
@@ -1223,6 +1445,256 @@ const userInitials = computed(() => {
 
 .oggi-empty-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
 .oggi-empty-sub   { font-size: 13px; }
+
+// ── WO Cards (LE TUE ATTIVITÀ DI OGGI) ───────────────────────────────
+
+.wo-card-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wo-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  transition: border-color .15s;
+
+  &.wo-card-live   { border-color: var(--ok); }
+  &.wo-card-travel { border-color: var(--primary); }
+  &.wo-card-done   { opacity: .65; }
+}
+
+.wo-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.wo-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+
+  &.wo-badge-idle   { background: var(--surface-2); color: var(--muted); border: 1px solid var(--border-strong); }
+  &.wo-badge-travel { background: rgba(var(--primary-rgb, 59,130,246),.12); color: var(--primary); }
+  &.wo-badge-live   { background: var(--ok-soft); color: var(--ok-ink); }
+  &.wo-badge-done   { background: var(--surface-2); color: var(--muted); }
+}
+
+.wo-badge-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+}
+
+.wo-card-code {
+  font-family: var(--ff-mono);
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.wo-card-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.3;
+  margin-bottom: 8px;
+}
+
+.wo-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 12px;
+
+  span {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+
+  svg {
+    width: 12px;
+    height: 12px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex-shrink: 0;
+  }
+}
+
+.wo-elapsed {
+  font-family: var(--ff-mono);
+  font-weight: 700;
+  color: var(--ok-ink) !important;
+}
+
+.wo-card-footer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.wo-cta {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-family: var(--ff);
+  font-size: 13px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  transition: opacity .12s, transform .1s;
+
+  &:active { transform: scale(.96); opacity: .8; }
+
+  svg {
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
+  }
+
+  // Primary orange: start work (takes ~75% via flex: 3)
+  &.wo-cta-primary {
+    background: var(--live);
+    color: #000;
+
+    svg { fill: currentColor; stroke: none; }
+  }
+
+  // Blue transfer: secondary button (takes ~25% via flex: 1)
+  &.wo-cta-transfer {
+    background: rgba(45,91,255,.1);
+    border: 1px solid rgba(45,91,255,.3);
+    color: var(--primary);
+    flex: 1;
+
+    svg { stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+    &:active { background: rgba(45,91,255,.2); }
+
+    &.wo-cta-transfer-live {
+      background: rgba(45,91,255,.15);
+      border-color: rgba(45,91,255,.4);
+      &:active { background: var(--err-soft); border-color: var(--err); color: var(--err-ink); }
+    }
+  }
+
+  // The main button takes 3x the width of the transfer button
+  &.wo-cta-main { flex: 3; }
+
+  &.wo-cta-stop {
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    color: var(--ink);
+
+    svg { fill: currentColor; stroke: none; }
+
+    &:active { background: var(--err-soft); border-color: var(--err); color: var(--err-ink); }
+  }
+
+  &.wo-cta-done {
+    background: var(--surface-2);
+    color: var(--muted);
+    cursor: default;
+
+    svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  }
+}
+
+.wo-transfer-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  display: inline-block;
+  animation: pulse 1.4s infinite;
+}
+
+.wo-complete-row {
+  padding-top: 8px;
+}
+
+.wo-complete-link {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  font-family: var(--ff);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 7px 12px;
+  transition: color .12s, border-color .12s;
+
+  &:hover  { color: var(--ok-ink); border-color: var(--ok); }
+  &:active { opacity: .7; }
+}
+
+.wo-reopen-row {
+  padding-top: 8px;
+  text-align: center;
+}
+
+.wo-reopen-link {
+  background: none;
+  border: none;
+  font-family: var(--ff);
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  padding: 4px 0;
+  transition: color .12s;
+
+  &:hover { color: var(--ink-2); }
+}
+
+.wo-maps-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--primary);
+  text-decoration: none;
+  flex-shrink: 0;
+  transition: background .12s;
+
+  &:active { background: var(--surface-3); }
+
+  svg {
+    width: 16px;
+    height: 16px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
 
 // ── Costi ─────────────────────────────────────────────────────────────
 .oggi-costs-card {
@@ -1747,6 +2219,7 @@ const userInitials = computed(() => {
 
 .cancel-btn { background: var(--surface-2); color: var(--ink); border: 1px solid var(--border-strong); }
 .delete-confirm-btn { background: var(--err); color: #fff; }
+.reopen-confirm-btn { background: var(--primary); color: #fff; }
 
 
 </style>

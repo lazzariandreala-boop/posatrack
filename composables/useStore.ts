@@ -79,17 +79,27 @@ function mergeStoreData(local: StoreData, remote: StoreData): StoreData {
   const remoteActMap = new Map(remote.activities.map(a => [a.id, a]))
   const allActIds    = new Set([...localActMap.keys(), ...remoteActMap.keys()])
 
+  // Migrate any planned placeholder activity that was stored with the old bug
+  // (endTime === startTime, duration: 0). These should have endTime: null.
+  function fixPlaceholder(a: Activity): Activity {
+    if (a.isPlanned && a.duration === 0 && a.endTime !== null && a.endTime === a.startTime) {
+      return { ...a, endTime: null }
+    }
+    return a
+  }
+
   const activities: Activity[] = []
   for (const id of allActIds) {
     if (deletedIds.has(id)) continue
     const l = localActMap.get(id)
     const r = remoteActMap.get(id)
     if (!l) {
-      activities.push(r!)
+      activities.push(fixPlaceholder(r!))
     } else if (!r) {
-      activities.push(l)
+      activities.push(fixPlaceholder(l))
     } else {
-      activities.push(l.endTime === null && r.endTime !== null ? r : l)
+      const chosen = l.endTime === null && r.endTime !== null ? r : l
+      activities.push(fixPlaceholder(chosen))
     }
   }
 
@@ -242,7 +252,9 @@ export function useStore() {
   }
 
   function getOngoing(dateStr: string): Activity | null {
-    return _load().activities.find(a => a.date === dateStr && !a.endTime) ?? null
+    return _load().activities.find(
+      a => a.date === dateStr && !a.endTime && !(a.isPlanned && a.duration === 0)
+    ) ?? null
   }
 
   function add(activity: Activity): void {
@@ -433,7 +445,7 @@ export function useStore() {
           note:        wo.note,
           date:        todayStr,
           startTime:   nowTs,
-          endTime:     nowTs,
+          endTime:     null,
           startLoc:    null,
           endLoc:      null,
           duration:    0,

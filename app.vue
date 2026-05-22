@@ -134,10 +134,11 @@ watch(
 
     <!-- Area viste scrollabile -->
     <div id="views-wrap">
-      <TimerView     v-show="currentView === 'timer'" />
-      <SummaryView   v-show="currentView === 'summary'" />
-      <DashboardView v-show="currentView === 'dashboard'" />
-      <PlanningView  v-show="currentView === 'planning'" />
+      <TimerView              v-show="currentView === 'timer'" />
+      <SummaryView            v-show="currentView === 'summary'" />
+      <DashboardView          v-show="currentView === 'dashboard'" />
+      <PlanningView           v-show="currentView === 'planning'" />
+      <LavorazioneDetailView  v-show="currentView === 'lavorazione-detail'" />
       <!-- map e profile sono mobile-only: map mostra SummaryView con mappa, profile mostra WorkspaceModal -->
     </div>
 

@@ -155,6 +155,21 @@ export interface WorkOrder {
 
   /** Link Google Maps per la posizione del cantiere (solo tipo posa) */
   mapsLink?: string
+
+  // ── Campi aggiuntivi per la vista Lavorazioni ─────────────────────
+  /** Nome del cliente/committente */
+  cliente?: string
+  /** Città o indirizzo del cantiere (testo libero) */
+  luogo?: string
+  /** Livello di priorità della lavorazione */
+  priorita?: 'urgente' | 'alta' | 'media' | 'bassa'
+  /**
+   * Stato manuale della lavorazione (override dello stato derivato dalle attività).
+   * Lo stato "in_corso" non è impostabile manualmente: viene derivato dalle attività live.
+   */
+  statoManuale?: 'assegnato' | 'in_viaggio' | 'bloccato' | 'da_verificare' | 'completato'
+  /** Nomi degli operatori assegnati alla lavorazione */
+  squadra?: string[]
 }
 
 /** Struttura root del dato in localStorage */
@@ -208,7 +223,7 @@ export interface Workspace {
 }
 
 /** Vista attiva nell'app (navigazione single-page) */
-export type ViewName = 'timer' | 'summary' | 'dashboard' | 'planning' | 'map' | 'profile'
+export type ViewName = 'timer' | 'summary' | 'dashboard' | 'planning' | 'map' | 'profile' | 'lavorazione-detail'
 
 /** Metadati visuali per ogni tipo di attività */
 export interface ActivityTypeMeta {

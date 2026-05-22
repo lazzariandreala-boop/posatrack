@@ -1629,4 +1629,36 @@ const searchQuery = ref('')
   font-weight: 700;
   flex-shrink: 0;
 }
+
+@media (min-width: 800px) {
+  .db-topbar-meta       { font-size: 13px; }
+  .db-topbar-title      { font-size: 24px; }
+  .db-topbar-sub        { font-size: 14px; }
+  .db-search-input      { font-size: 14px; }
+  .db-new-btn           { font-size: 15px; }
+  .db-period-tabs button { font-size: 13px; }
+  .db-section-title     { font-size: 15px; }
+  .db-section-date-pill { font-size: 13px; }
+  .db-section-sub       { font-size: 13px; }
+  .db-section-empty     { font-size: 15px; }
+  .db-view-toggle button { font-size: 13px; }
+  .db-link-btn          { font-size: 14px; }
+  .db-tl-empty          { font-size: 14px; }
+  .db-tl-name           { font-size: 13px; }
+  .db-tl-order-chip     { font-size: 13px; }
+  .db-job-code          { font-size: 13px; }
+  .db-job-status-live   { font-size: 13px; }
+  .db-job-title         { font-size: 15px; }
+  .db-job-meta          { font-size: 13px; }
+  .db-job-progress-label { font-size: 13px; }
+  .db-day-date          { font-size: 14px; }
+  .db-day-count         { font-size: 13px; }
+  .db-day-time          { font-size: 14px; }
+  .db-panel-title       { font-size: 14px; }
+  .db-map-empty         { font-size: 13px; }
+  .db-team-name         { font-size: 14px; }
+  .db-team-status       { font-size: 13px; }
+  .db-team-elapsed      { font-size: 14px; }
+  .db-feed-text         { font-size: 13px; }
+}
 </style>

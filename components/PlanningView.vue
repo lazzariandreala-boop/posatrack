@@ -3,10 +3,8 @@ import { ref, computed } from 'vue'
 import { useStore }    from '~/composables/useStore'
 import { useAppState } from '~/composables/useAppState'
 import { useExport }   from '~/composables/useExport'
-import { ACT, MONTHS_IT } from '~/constants'
+import { ACT } from '~/constants'
 import type { WorkOrder, ActivityType } from '~/types'
-
-const WEEK_HEADERS = ['Lun', 'Mar', 'Mer', 'Gio', 'Ven', 'Sab', 'Dom']
 
 const store    = useStore()
 const appState = useAppState()
@@ -30,64 +28,6 @@ function getWorkingDays(startDateStr: string, count: number): string[] {
   return result
 }
 
-function fmtEstimatedTime(minutes: number): string {
-  if (!minutes) return ''
-  const h = Math.floor(minutes / 60)
-  const m = minutes % 60
-  if (h > 0 && m > 0) return `~${h}h ${m}m`
-  if (h > 0) return `~${h}h`
-  return `~${m}m`
-}
-
-// ── Calendar ──────────────────────────────────────────────────────────
-const calYear  = ref(new Date().getFullYear())
-const calMonth = ref(new Date().getMonth())
-
-const selectedDate = ref(todayStr)
-
-const calTitle = computed(() => `${MONTHS_IT[calMonth.value]} ${calYear.value}`)
-
-function daysInMonth(y: number, m: number): number {
-  return new Date(y, m + 1, 0).getDate()
-}
-function firstWeekday(y: number, m: number): number {
-  return (new Date(y, m, 1).getDay() + 6) % 7
-}
-
-const calDays = computed(() => {
-  const y = calYear.value
-  const m = calMonth.value
-  const total    = daysInMonth(y, m)
-  const firstDay = firstWeekday(y, m)
-  const cells: Array<{ day: number; dateStr: string; orders: number } | null> = []
-  for (let i = 0; i < firstDay; i++) cells.push(null)
-  for (let d = 1; d <= total; d++) {
-    const dateStr = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
-    cells.push({ day: d, dateStr, orders: store.getWorkOrdersForDate(dateStr).length })
-  }
-  return cells
-})
-
-function prevMonth(): void {
-  if (calMonth.value === 0) { calMonth.value = 11; calYear.value-- }
-  else calMonth.value--
-}
-function nextMonth(): void {
-  if (calMonth.value === 11) { calMonth.value = 0; calYear.value++ }
-  else calMonth.value++
-}
-function selectDate(dateStr: string): void {
-  selectedDate.value = dateStr
-  formData.value.date = dateStr
-}
-
-// ── Day orders ────────────────────────────────────────────────────────
-const selectedOrders = computed(() =>
-  store.getWorkOrdersForDate(selectedDate.value)
-    .slice()
-    .sort((a, b) => (a.startHour ?? '').localeCompare(b.startHour ?? ''))
-)
-
 function fmtDate(dateStr: string): string {
   if (!dateStr) return ''
   const [, m, d] = dateStr.split('-').map(Number)
@@ -95,9 +35,184 @@ function fmtDate(dateStr: string): string {
   return `${d} ${months[m - 1]}`
 }
 
-// ── Form ──────────────────────────────────────────────────────────────
-const editingId = ref<string | null>(null)
-const formData  = ref({
+function fmtShortDate(dateStr: string): string {
+  const [, m, d] = dateStr.split('-').map(Number)
+  const days   = ['Dom','Lun','Mar','Mer','Gio','Ven','Sab']
+  const months = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic']
+  const date   = new Date(parseInt(dateStr.split('-')[0]), m - 1, d)
+  return `${days[date.getDay()]} ${d} ${months[m - 1]}`
+}
+
+// ── Avatar helpers ────────────────────────────────────────────────────
+const AVATAR_COLORS = ['#4f46e5','#0891b2','#059669','#d97706','#7c3aed','#db2777','#0284c7','#16a34a']
+
+function getInitials(name: string): string {
+  return name.split(' ').map((n: string) => n[0] ?? '').join('').toUpperCase().slice(0, 2)
+}
+
+function nameColor(name: string): string {
+  let h = 0
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % AVATAR_COLORS.length
+  return AVATAR_COLORS[Math.abs(h)]
+}
+
+// ── Status derivation ─────────────────────────────────────────────────
+type WoStato = 'in_corso' | 'in_viaggio' | 'assegnato' | 'pianificato' | 'da_verificare' | 'bloccato' | 'completato'
+
+const STATO_DOT: Record<WoStato, string> = {
+  in_corso:      '#f5a524',
+  in_viaggio:    '#3b82f6',
+  assegnato:     '#3b82f6',
+  pianificato:   '#6b7280',
+  da_verificare: '#f59e0b',
+  bloccato:      '#ef4444',
+  completato:    '#10b981',
+}
+
+function getWoStato(wo: WorkOrder): WoStato {
+  const linked = store.all().filter(a =>
+    a.workOrderId === wo.id ||
+    (wo.orderNumber && a.orderNumber === wo.orderNumber && a.date === wo.date)
+  )
+  if (linked.some(a => !a.endTime))        return 'in_corso'
+  if (wo.statoManuale === 'bloccato')      return 'bloccato'
+  if (wo.statoManuale === 'da_verificare') return 'da_verificare'
+  if (wo.statoManuale === 'in_viaggio')    return 'in_viaggio'
+  if (wo.statoManuale === 'assegnato')     return 'assegnato'
+  if (wo.statoManuale === 'completato')    return 'completato'
+  return 'pianificato'
+}
+
+// ── Week navigation ───────────────────────────────────────────────────
+const weekOffset = ref(0)
+
+const currentWeekStart = computed(() => {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  const dow = (d.getDay() + 6) % 7
+  d.setDate(d.getDate() - dow + weekOffset.value * 7)
+  return d
+})
+
+const currentWeekDays = computed(() => {
+  const start = currentWeekStart.value
+  const shortDays = ['Lun','Mar','Mer','Gio','Ven','Sab','Dom']
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(start)
+    d.setDate(d.getDate() + i)
+    const dow = d.getDay()
+    return {
+      dateStr:   toDateStr(d),
+      num:       d.getDate(),
+      name:      shortDays[(dow + 6) % 7],
+      isToday:   toDateStr(d) === todayStr,
+      isWeekend: dow === 0 || dow === 6,
+    }
+  })
+})
+
+const weekNumber = computed(() => {
+  const d = currentWeekStart.value
+  const startOfYear = new Date(d.getFullYear(), 0, 1)
+  return Math.ceil(((d.getTime() - startOfYear.getTime()) / 86400000 + ((startOfYear.getDay() + 6) % 7)) / 7)
+})
+
+const weekRange = computed(() => {
+  const days   = currentWeekDays.value
+  const months = ['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic']
+  const [, m1, d1] = days[0].dateStr.split('-').map(Number)
+  const [y2, m2, d2] = days[6].dateStr.split('-').map(Number)
+  if (m1 === m2) return `${d1}–${d2} ${months[m2 - 1]} ${y2}`
+  return `${d1} ${months[m1 - 1]} – ${d2} ${months[m2 - 1]} ${y2}`
+})
+
+const currentWeekOrders = computed(() => {
+  const dates = new Set(currentWeekDays.value.map(d => d.dateStr))
+  return store.getAllWorkOrders().filter(wo => dates.has(wo.date))
+})
+
+const weekStats = computed(() => {
+  const orders = currentWeekOrders.value
+  const mins   = orders.reduce((s, wo) => s + (wo.estimatedTime ?? 0), 0)
+  const h = Math.floor(mins / 60)
+  const m = mins % 60
+  return {
+    count:  orders.length,
+    hours:  mins > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : '—',
+    travel: orders.filter(wo => wo.type === 'trasferimento').length,
+  }
+})
+
+// ── Operator grid ─────────────────────────────────────────────────────
+const searchQuery = ref('')
+
+const weekOperators = computed<string[]>(() => {
+  const nameSet = new Set<string>()
+  for (const wo of currentWeekOrders.value) {
+    wo.squadra?.forEach(n => { if (n) nameSet.add(n) })
+  }
+  return Array.from(nameSet).sort()
+})
+
+interface OperatorRow {
+  name: string
+  isUnassigned: boolean
+  byDay: Record<string, WorkOrder[]>
+}
+
+const operatorGrid = computed((): OperatorRow[] => {
+  const rows: OperatorRow[] = weekOperators.value.map(name => {
+    const byDay: Record<string, WorkOrder[]> = {}
+    for (const day of currentWeekDays.value) {
+      byDay[day.dateStr] = currentWeekOrders.value.filter(
+        wo => wo.date === day.dateStr && (wo.squadra?.includes(name) ?? false)
+      )
+    }
+    return { name, isUnassigned: false, byDay }
+  })
+
+  // Fallback row for work orders without any operator assigned
+  const unassigned = currentWeekOrders.value.filter(wo => !wo.squadra || wo.squadra.length === 0)
+  if (unassigned.length > 0) {
+    const byDay: Record<string, WorkOrder[]> = {}
+    for (const day of currentWeekDays.value) {
+      byDay[day.dateStr] = unassigned.filter(wo => wo.date === day.dateStr)
+    }
+    rows.push({ name: 'Non assegnato', isUnassigned: true, byDay })
+  }
+
+  return rows
+})
+
+const filteredOperatorGrid = computed((): OperatorRow[] => {
+  const q = searchQuery.value.trim().toLowerCase()
+  if (!q) return operatorGrid.value
+  return operatorGrid.value.filter(row =>
+    row.name.toLowerCase().includes(q) ||
+    Object.values(row.byDay).some(wos =>
+      wos.some(wo =>
+        [wo.orderNumber, wo.detail, wo.luogo, wo.cliente, ...(wo.squadra ?? [])].some(
+          v => v?.toLowerCase().includes(q)
+        )
+      )
+    )
+  )
+})
+
+// ── Navigate to detail ────────────────────────────────────────────────
+function openDetail(woId: string): void {
+  appState.selectedLavorazioneId.value = woId
+  appState.navigate('lavorazione-detail')
+}
+
+function handleCellClick(day: { dateStr: string }): void {
+  openForm(day.dateStr)
+}
+
+// ── Form modal ────────────────────────────────────────────────────────
+const isFormOpen = ref(false)
+const editingId  = ref<string | null>(null)
+const formData   = ref({
   orderNumber:          '',
   type:                 'posa' as ActivityType,
   detail:               '',
@@ -116,15 +231,14 @@ const formData  = ref({
 
 const planningTypes = ['posa', 'trasferimento', 'altro'] as const
 
-function resetFormData(): void {
-  editingId.value = null
-  formData.value  = {
+function openForm(date?: string): void {
+  formData.value = {
     orderNumber:          '',
     type:                 formData.value.type,
     detail:               '',
     note:                 '',
     mapsLink:             '',
-    date:                 selectedDate.value,
+    date:                 date ?? todayStr,
     estimatedDuration:    1,
     estimatedTimeH:       0,
     estimatedTimeM:       0,
@@ -134,11 +248,18 @@ function resetFormData(): void {
     externalTeamCost:     0,
     budget:               0,
   }
+  editingId.value  = null
+  isFormOpen.value = true
+}
+
+function closeForm(): void {
+  isFormOpen.value = false
+  editingId.value  = null
 }
 
 function openEditForm(wo: WorkOrder): void {
-  editingId.value = wo.id
   const et = wo.estimatedTime ?? 0
+  editingId.value = wo.id
   formData.value  = {
     orderNumber:          wo.orderNumber,
     type:                 wo.type as typeof planningTypes[number],
@@ -155,15 +276,14 @@ function openEditForm(wo: WorkOrder): void {
     externalTeamCost:     wo.externalTeamCost ?? 0,
     budget:               wo.budget ?? 0,
   }
+  isFormOpen.value = true
 }
-
-function cancelForm(): void { resetFormData() }
 
 function saveForm(): void {
   const t = formData.value.type
   if (t === 'posa') {
     if (!formData.value.orderNumber.trim()) { appState.showToast('Inserire il numero ordine'); return }
-    if (!formData.value.detail.trim())      { appState.showToast('Selezionare l\'attrezzatura'); return }
+    if (!formData.value.detail.trim())      { appState.showToast("Selezionare l'attrezzatura"); return }
   } else if (t === 'altro') {
     if (!formData.value.detail.trim())      { appState.showToast('Inserire la descrizione'); return }
   }
@@ -232,17 +352,12 @@ function saveForm(): void {
       })
       appState.showToast('Lavorazione pianificata')
     }
-
-    const [y, m] = formData.value.date.split('-').map(Number)
-    calYear.value      = y
-    calMonth.value     = m - 1
-    selectedDate.value = formData.value.date
   }
 
-  resetFormData()
+  closeForm()
 }
 
-// ── Move order ────────────────────────────────────────────────────────
+// ── Move / delete ─────────────────────────────────────────────────────
 const movingOrderId  = ref<string | null>(null)
 const moveTargetDate = ref('')
 
@@ -253,24 +368,17 @@ function startMove(wo: WorkOrder): void {
 function confirmMove(): void {
   if (!movingOrderId.value || !moveTargetDate.value) return
   store.updateWorkOrder(movingOrderId.value, { date: moveTargetDate.value })
-  const [y, m] = moveTargetDate.value.split('-').map(Number)
-  calYear.value      = y
-  calMonth.value     = m - 1
-  selectedDate.value = moveTargetDate.value
   movingOrderId.value = null
   appState.showToast('Lavorazione spostata')
 }
 function cancelMove(): void { movingOrderId.value = null }
 
-// ── Delete order ──────────────────────────────────────────────────────
 function deleteOrder(wo: WorkOrder): void {
   if (wo.groupId) {
     const groupCount = store.getAllWorkOrders().filter(o => o.groupId === wo.groupId).length
     if (groupCount > 1) {
       const deleteAll = confirm(
-        `Questa è la giornata ${wo.dayIndex ?? '?'} di ${wo.totalDays ?? groupCount} di una lavorazione multi-giorno.\n\n` +
-        `Premi OK per eliminare TUTTA la pianificazione (${groupCount} giorni)\n` +
-        `Premi Annulla per eliminare solo questo giorno`
+        `Questa è la giornata ${wo.dayIndex ?? '?'} di ${wo.totalDays ?? groupCount} di una lavorazione multi-giorno.\n\nPremi OK per eliminare TUTTA la pianificazione (${groupCount} giorni)\nPremi Annulla per eliminare solo questo giorno`
       )
       if (deleteAll) {
         store.removeWorkOrderGroup(wo.groupId)
@@ -288,535 +396,257 @@ function deleteOrder(wo: WorkOrder): void {
   appState.showToast('Pianificazione eliminata')
 }
 
-// ── Gantt (3-week, existing) ──────────────────────────────────────────
-const GANTT_DAYS = 21
-const DAY_NAMES  = ['Dom','Lun','Mar','Mer','Gio','Ven','Sab']
-
-function ganttStart(): Date {
-  const d = new Date()
-  d.setHours(0, 0, 0, 0)
-  const dow = (d.getDay() + 6) % 7
-  d.setDate(d.getDate() - dow)
-  return d
-}
-
-const ganttDays = computed(() => {
-  const start = ganttStart()
-  return Array.from({ length: GANTT_DAYS }, (_, i) => {
-    const d = new Date(start)
-    d.setDate(d.getDate() + i)
-    const dow = d.getDay()
-    return { dateStr: toDateStr(d), num: d.getDate(), name: DAY_NAMES[dow], isToday: toDateStr(d) === todayStr, isWeekend: dow === 0 || dow === 6 }
-  })
-})
-
-const ganttWindowOrders = computed(() => {
-  const start = ganttStart()
-  const end   = new Date(start)
-  end.setDate(end.getDate() + GANTT_DAYS)
-  const s = toDateStr(start)
-  const e = toDateStr(new Date(end.getTime() - 86_400_000))
-  return store.getAllWorkOrders().filter(wo => wo.date >= s && wo.date <= e)
-})
-
-interface GanttRow {
-  key: string; label: string; color: string; ordersByDate: Record<string, WorkOrder>
-}
-
-const ganttRows = computed((): GanttRow[] => {
-  const rowMap = new Map<string, GanttRow>()
-  for (const wo of ganttWindowOrders.value) {
-    const key = wo.groupId ?? wo.id
-    if (!rowMap.has(key)) {
-      const raw = `${wo.orderNumber} – ${wo.detail}`
-      rowMap.set(key, { key, label: raw.length > 36 ? raw.substring(0, 34) + '…' : raw, color: ACT[wo.type]?.color ?? '#888', ordersByDate: {} })
-    }
-    rowMap.get(key)!.ordersByDate[wo.date] = wo
-  }
-  return Array.from(rowMap.values()).sort((a, b) => {
-    const aFirst = Object.keys(a.ordersByDate).sort()[0] ?? ''
-    const bFirst = Object.keys(b.ordersByDate).sort()[0] ?? ''
-    return aFirst.localeCompare(bFirst)
-  })
-})
-
-const selectedGanttBlock = ref<WorkOrder | null>(null)
-const ganttMoveDate       = ref('')
-
-function selectGanttBlock(wo: WorkOrder): void {
-  if (selectedGanttBlock.value?.id === wo.id) { selectedGanttBlock.value = null; return }
-  selectedGanttBlock.value = wo
-  ganttMoveDate.value      = wo.date
-}
-function quickMoveGanttBlock(dateStr: string): void {
-  if (!selectedGanttBlock.value) return
-  store.updateWorkOrder(selectedGanttBlock.value.id, { date: dateStr })
-  appState.showToast('Lavorazione spostata')
-  selectedGanttBlock.value = null
-}
-function confirmGanttMove(): void {
-  if (!selectedGanttBlock.value || !ganttMoveDate.value) return
-  store.updateWorkOrder(selectedGanttBlock.value.id, { date: ganttMoveDate.value })
-  appState.showToast('Lavorazione spostata')
-  selectedGanttBlock.value = null
-}
-
-const durationPreviewDates = computed(() => {
-  if (!formData.value.date || formData.value.estimatedDuration <= 1) return []
-  return getWorkingDays(formData.value.date, formData.value.estimatedDuration)
-})
-
-function fmtShortDate(dateStr: string): string {
-  const [, m, d] = dateStr.split('-').map(Number)
-  const days   = ['Dom','Lun','Mar','Mer','Gio','Ven','Sab']
-  const months = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic']
-  const date   = new Date(parseInt(dateStr.split('-')[0]), m - 1, d)
-  return `${days[date.getDay()]} ${d} ${months[m - 1]}`
-}
-
-function clearGanttBlock(): void { selectedGanttBlock.value = null }
-
-function handleGanttCellClick(row: GanttRow, dateStr: string): void {
-  const wo = row.ordersByDate[dateStr]
-  if (wo) selectGanttBlock(wo)
-  else if (selectedGanttBlock.value) quickMoveGanttBlock(dateStr)
-}
-
-// ── Week navigation (new) ─────────────────────────────────────────────
-const weekOffset = ref(0)
-
-const currentWeekStart = computed(() => {
-  const d = new Date()
-  d.setHours(0, 0, 0, 0)
-  const dow = (d.getDay() + 6) % 7
-  d.setDate(d.getDate() - dow + weekOffset.value * 7)
-  return d
-})
-
-const currentWeekDays = computed(() => {
-  const start = currentWeekStart.value
-  const shortDays = ['Lun','Mar','Mer','Gio','Ven','Sab','Dom']
-  return Array.from({ length: 7 }, (_, i) => {
-    const d = new Date(start)
-    d.setDate(d.getDate() + i)
-    const dow = d.getDay()
-    return {
-      dateStr:   toDateStr(d),
-      num:       d.getDate(),
-      name:      shortDays[(dow + 6) % 7],
-      isToday:   toDateStr(d) === todayStr,
-      isWeekend: dow === 0 || dow === 6,
-    }
-  })
-})
-
-const weekNumber = computed(() => {
-  const d = currentWeekStart.value
-  const startOfYear = new Date(d.getFullYear(), 0, 1)
-  return Math.ceil(((d.getTime() - startOfYear.getTime()) / 86400000 + ((startOfYear.getDay() + 6) % 7)) / 7)
-})
-
-const weekRange = computed(() => {
-  const days   = currentWeekDays.value
-  const months = ['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic']
-  const [y1, m1, d1] = days[0].dateStr.split('-').map(Number)
-  const [y2, m2, d2] = days[6].dateStr.split('-').map(Number)
-  if (m1 === m2) return `${d1}–${d2} ${months[m2 - 1]} ${y2}`
-  return `${d1} ${months[m1 - 1]} – ${d2} ${months[m2 - 1]} ${y2}`
-})
-
-const currentWeekOrders = computed(() => {
-  const dates = new Set(currentWeekDays.value.map(d => d.dateStr))
-  return store.getAllWorkOrders().filter(wo => dates.has(wo.date))
-})
-
-const weekStats = computed(() => {
-  const orders = currentWeekOrders.value
-  const mins   = orders.reduce((s, wo) => s + (wo.estimatedTime ?? 0), 0)
-  const h = Math.floor(mins / 60)
-  const m = mins % 60
-  return {
-    count:  orders.length,
-    hours:  mins > 0 ? (m > 0 ? `${h}h ${m}m` : `${h}h`) : '—',
-    travel: orders.filter(wo => wo.type === 'trasferimento').length,
-  }
-})
-
-const weekGanttRows = computed((): GanttRow[] => {
-  const rowMap = new Map<string, GanttRow>()
-  for (const wo of currentWeekOrders.value) {
-    const key = wo.groupId ?? wo.id
-    if (!rowMap.has(key)) {
-      const label = wo.detail.length > 32 ? wo.detail.substring(0, 30) + '…' : wo.detail
-      rowMap.set(key, {
-        key,
-        label:        wo.orderNumber ? `${wo.orderNumber} – ${label}` : label,
-        color:        ACT[wo.type]?.color ?? '#888',
-        ordersByDate: {},
-      })
-    }
-    rowMap.get(key)!.ordersByDate[wo.date] = wo
-  }
-  return Array.from(rowMap.values()).sort((a, b) => {
-    const aFirst = Object.keys(a.ordersByDate).sort()[0] ?? ''
-    const bFirst = Object.keys(b.ordersByDate).sort()[0] ?? ''
-    return aFirst.localeCompare(bFirst)
-  })
-})
-
+// ── Backlog ───────────────────────────────────────────────────────────
 const backlogOrders = computed(() => {
   const weekDates = new Set(currentWeekDays.value.map(d => d.dateStr))
   return store.getAllWorkOrders()
     .filter(wo => !weekDates.has(wo.date) && wo.date >= todayStr)
     .sort((a, b) => a.date.localeCompare(b.date))
-    .slice(0, 6)
 })
 
-const workspaceName = computed(() => appState.activeWorkspaceName.value || 'Workspace')
+// ── Multi-day preview ─────────────────────────────────────────────────
+const durationPreviewDates = computed(() => {
+  if (!formData.value.date || formData.value.estimatedDuration <= 1) return []
+  return getWorkingDays(formData.value.date, formData.value.estimatedDuration)
+})
 
-const showGantt = ref(false)
+// ── Export ────────────────────────────────────────────────────────────
+function exportCurrentMonth(): void {
+  const d = currentWeekStart.value
+  const y = d.getFullYear()
+  const m = d.getMonth()
+  const start  = `${y}-${String(m + 1).padStart(2, '0')}-01`
+  const endDay = new Date(y, m + 1, 0)
+  exporter.exportPlanning(start, toDateStr(endDay))
+}
+
+const workspaceName = computed(() => appState.activeWorkspaceName.value || 'Workspace')
 </script>
 
 <template>
   <div class="view" id="view-planning">
 
-    <!-- ── Header ──────────────────────────────────────────────────── -->
+    <!-- ── Top bar ──────────────────────────────────────────────────── -->
     <div class="pl-top">
       <div class="pl-heading">
         <div class="pl-ws-label">{{ workspaceName }}</div>
         <h1 class="pl-title">Pianificazione</h1>
-        <div class="pl-week-label">Settimana {{ weekNumber }} · {{ weekRange }}</div>
+        <div class="pl-week-sub">Settimana {{ weekNumber }} · {{ weekRange }}</div>
       </div>
+
+      <div class="pl-search-wrap">
+        <svg class="pl-search-icon" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input v-model="searchQuery" type="text" class="pl-search" placeholder="Cerca lavorazioni, clienti, operatori..." />
+        <kbd class="pl-search-kbd">⌘K</kbd>
+      </div>
+
       <div class="pl-actions">
-        <button class="pl-btn-ghost" @click="weekOffset = 0">Oggi</button>
         <div class="pl-week-nav">
           <button @click="weekOffset--">
             <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
+          <button class="pl-oggi-nav-btn" @click="weekOffset = 0">Oggi</button>
           <button @click="weekOffset++">
             <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
           </button>
         </div>
-        <button
-          class="pl-btn-ghost"
-          @click="exporter.exportPlanning(
-            `${calYear}-${String(calMonth + 1).padStart(2, '0')}-01`,
-            (() => { const d = new Date(calYear, calMonth + 1, 0); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` })()
-          )"
-        >
-          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
-          Esporta Excel
+        <button class="pl-btn-primary" @click="openForm()">
+          <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Pianifica
+        </button>
+        <button class="pl-bell-btn" title="Notifiche">
+          <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
         </button>
       </div>
     </div>
 
-    <!-- ── Main grid ───────────────────────────────────────────────── -->
-    <div class="pl-grid">
+    <!-- ── Scrollable content ──────────────────────────────────────── -->
+    <div class="pl-content">
 
-      <!-- Left: Weekly grid + Backlog ──────────────────────────────── -->
-      <div class="pl-col-main">
+      <!-- Operator weekly grid ─────────────────────────────────────── -->
+      <div class="pl-og-wrap">
 
-        <!-- Weekly planning grid -->
-        <div class="pl-section">
-          <div class="pl-section-head">
-            <span class="pl-section-title">Griglia settimanale</span>
-            <span class="pl-section-sub">{{ weekStats.count }} lavorazioni</span>
+        <!-- Header row -->
+        <div class="pl-og-header">
+          <div class="pl-og-op-col-hdr">OPERATORE</div>
+          <div
+            v-for="day in currentWeekDays"
+            :key="day.dateStr"
+            class="pl-og-day-col-hdr"
+            :class="{ 'is-today': day.isToday, 'is-weekend': day.isWeekend }"
+          >
+            <span class="pl-og-day-name">{{ day.name.toUpperCase() }} {{ day.num }}</span>
+            <span v-if="day.isToday" class="pl-oggi-pill">OGGI</span>
           </div>
+        </div>
 
-          <!-- Gantt move toolbar -->
-          <div v-if="selectedGanttBlock" class="pl-gantt-toolbar">
-            <span class="pl-gantt-toolbar-label">
-              Sposta <strong>{{ selectedGanttBlock.detail }}</strong>
-              <span v-if="selectedGanttBlock.totalDays && selectedGanttBlock.totalDays > 1">
-                (Giorno {{ selectedGanttBlock.dayIndex }}/{{ selectedGanttBlock.totalDays }})
-              </span>
-            </span>
-            <input v-model="ganttMoveDate" type="date" class="pl-gantt-date-input" />
-            <button class="pl-gantt-confirm" @click="confirmGanttMove">Sposta</button>
-            <button class="pl-gantt-cancel" @click="clearGanttBlock">✕</button>
-          </div>
+        <!-- Empty state -->
+        <div v-if="!currentWeekOrders.length" class="pl-empty">
+          <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+          Nessuna lavorazione questa settimana
+        </div>
 
-          <div v-if="!weekGanttRows.length" class="pl-empty">
-            <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-            Nessuna lavorazione questa settimana
-          </div>
-          <div v-else class="pl-week-wrap">
-            <!-- Header row -->
-            <div class="pl-week-header">
-              <div class="pl-week-label-cell pl-week-label-hdr">Lavorazione</div>
-              <div
-                v-for="day in currentWeekDays"
-                :key="day.dateStr"
-                class="pl-week-day-hdr"
-                :class="{ 'is-today': day.isToday, 'is-weekend': day.isWeekend }"
-              >
-                <div class="pl-week-day-name">{{ day.name }}</div>
-                <div class="pl-week-day-num">{{ day.num }}</div>
-              </div>
+        <!-- Operator rows -->
+        <div
+          v-for="row in filteredOperatorGrid"
+          :key="row.name"
+          class="pl-og-row"
+        >
+          <!-- Operator info cell -->
+          <div class="pl-og-op-cell">
+            <div
+              class="pl-op-avatar"
+              :style="row.isUnassigned
+                ? { background: 'var(--surface-3)', color: 'var(--muted)', fontSize: '12px' }
+                : { background: nameColor(row.name) }"
+            >
+              {{ row.isUnassigned ? '?' : getInitials(row.name) }}
             </div>
-            <!-- Rows -->
-            <div v-for="row in weekGanttRows" :key="row.key" class="pl-week-row">
-              <div class="pl-week-label-cell" :title="row.label">
-                <div class="pl-week-row-dot" :style="{ background: row.color }" />
-                <span class="pl-week-row-label">{{ row.label }}</span>
-              </div>
-              <div
-                v-for="day in currentWeekDays"
-                :key="day.dateStr"
-                class="pl-week-cell"
-                :class="{
-                  'is-today':   day.isToday,
-                  'is-weekend': day.isWeekend,
-                  'is-drop':    selectedGanttBlock && !row.ordersByDate[day.dateStr],
-                }"
-                @click="handleGanttCellClick(row, day.dateStr)"
-              >
-                <div
-                  v-if="row.ordersByDate[day.dateStr]"
-                  class="pl-week-block"
-                  :class="{ 'is-selected': selectedGanttBlock?.id === row.ordersByDate[day.dateStr].id }"
-                  :style="{ background: row.color + 'CC', borderColor: row.color }"
-                  :title="`${row.ordersByDate[day.dateStr].detail} · Ord. ${row.ordersByDate[day.dateStr].orderNumber}`"
-                >
-                  <span v-if="(row.ordersByDate[day.dateStr].totalDays ?? 0) > 1" class="pl-week-block-badge">
-                    {{ row.ordersByDate[day.dateStr].dayIndex }}/{{ row.ordersByDate[day.dateStr].totalDays }}
-                  </span>
-                </div>
-              </div>
+            <div class="pl-op-info">
+              <div class="pl-op-name">{{ row.name }}</div>
+              <div class="pl-op-role">{{ row.isUnassigned ? 'Da assegnare' : 'Posatore' }}</div>
+            </div>
+          </div>
+
+          <!-- Day cells -->
+          <div
+            v-for="day in currentWeekDays"
+            :key="day.dateStr"
+            class="pl-og-day-cell"
+            :class="{ 'is-today': day.isToday, 'is-weekend': day.isWeekend }"
+            @click="handleCellClick(day)"
+          >
+            <div
+              v-for="wo in row.byDay[day.dateStr]"
+              :key="wo.id"
+              class="pl-pill"
+              :class="{
+                'pl-pill-live':   getWoStato(wo) === 'in_corso',
+                'pl-pill-travel': getWoStato(wo) === 'in_viaggio' || getWoStato(wo) === 'assegnato',
+              }"
+              @click.stop="openDetail(wo.id)"
+            >
+              <span class="pl-pill-dot" :style="{ background: STATO_DOT[getWoStato(wo)] }" />
+              <span class="pl-pill-text">{{ wo.orderNumber || wo.detail.slice(0, 12) }}<span v-if="wo.luogo" class="pl-pill-loc"> {{ wo.luogo }}</span></span>
             </div>
           </div>
         </div>
 
+      </div><!-- /pl-og-wrap -->
+
+      <!-- ── Bottom: backlog + stats ─────────────────────────────── -->
+      <div class="pl-bottom-row">
+
         <!-- Backlog -->
-        <div class="pl-section">
+        <div class="pl-backlog-section">
           <div class="pl-section-head">
             <span class="pl-section-title">Backlog · da assegnare</span>
-            <span class="pl-section-sub">{{ backlogOrders.length }} in coda</span>
+            <span class="pl-count-badge">{{ backlogOrders.length }}</span>
           </div>
           <div v-if="!backlogOrders.length" class="pl-empty">
             <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
             Nessun ordine in backlog
           </div>
           <div v-else class="pl-backlog-list">
-            <div v-for="wo in backlogOrders" :key="wo.id" class="pl-backlog-item">
+            <div
+              v-for="wo in backlogOrders"
+              :key="wo.id"
+              class="pl-backlog-item"
+              @click="openDetail(wo.id)"
+            >
               <div class="pl-backlog-left">
                 <div class="pl-backlog-id">{{ wo.orderNumber || '—' }}</div>
-                <div class="pl-backlog-detail">{{ wo.detail }}</div>
+                <div class="pl-backlog-detail">
+                  {{ wo.detail }}<template v-if="wo.cliente"> — {{ wo.cliente }}</template>
+                </div>
                 <div class="pl-backlog-meta">
-                  <span v-if="wo.mapsLink" class="pl-backlog-loc">
+                  <span v-if="wo.luogo">
                     <svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                    {{ wo.luogo }} ·
                   </span>
                   <span>
                     <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
                     {{ fmtDate(wo.date) }}
                   </span>
+                  <span v-if="wo.squadra?.length" class="pl-backlog-avatars">
+                    <span
+                      v-for="name in wo.squadra.slice(0, 3)"
+                      :key="name"
+                      class="pl-backlog-avatar"
+                      :style="{ background: nameColor(name) }"
+                      :title="name"
+                    >{{ getInitials(name) }}</span>
+                  </span>
                 </div>
               </div>
               <div class="pl-backlog-right">
                 <span class="pl-backlog-status">Pianificato</span>
-                <span class="pl-backlog-priority" :style="{ background: `${ACT[wo.type]?.color}22`, color: ACT[wo.type]?.color }">
-                  {{ ACT[wo.type]?.label }}
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Full 3-week Gantt (collapsed section) -->
-        <div class="pl-section">
-          <div class="pl-section-head pl-section-head-toggle" @click="showGantt = !showGantt">
-            <span class="pl-section-title">Gantt 3 settimane</span>
-            <span class="pl-section-sub">{{ ganttWindowOrders.length }} lavorazioni</span>
-            <svg class="pl-toggle-arrow" :class="{ open: showGantt }" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
-          </div>
-          <div v-if="showGantt">
-            <div v-if="selectedGanttBlock" class="pl-gantt-toolbar">
-              <span class="pl-gantt-toolbar-label">
-                Sposta <strong>{{ selectedGanttBlock.detail }}</strong>
-              </span>
-              <input v-model="ganttMoveDate" type="date" class="pl-gantt-date-input" />
-              <button class="pl-gantt-confirm" @click="confirmGanttMove">Sposta</button>
-              <button class="pl-gantt-cancel" @click="clearGanttBlock">✕</button>
-            </div>
-            <div v-if="!ganttWindowOrders.length" class="pl-empty">
-              <svg viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-              Nessuna lavorazione nelle prossime 3 settimane
-            </div>
-            <div v-else class="pl-week-wrap pl-week-wrap-scroll">
-              <div class="pl-week-header">
-                <div class="pl-week-label-cell pl-week-label-hdr">Lavorazione</div>
-                <div
-                  v-for="day in ganttDays"
-                  :key="day.dateStr"
-                  class="pl-week-day-hdr pl-week-day-hdr-sm"
-                  :class="{ 'is-today': day.isToday, 'is-weekend': day.isWeekend }"
-                >
-                  <div class="pl-week-day-name">{{ day.name }}</div>
-                  <div class="pl-week-day-num">{{ day.num }}</div>
+                <span
+                  class="pl-backlog-priority"
+                  :style="{ background: `${ACT[wo.type]?.color}22`, color: ACT[wo.type]?.color }"
+                >{{ ACT[wo.type]?.label }}</span>
+                <div class="pl-backlog-actions" @click.stop>
+                  <button class="pl-icon-btn" title="Modifica" @click="openEditForm(wo)">
+                    <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  </button>
+                  <button class="pl-icon-btn pl-icon-btn-danger" title="Elimina" @click="deleteOrder(wo)">
+                    <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6"/></svg>
+                  </button>
                 </div>
-              </div>
-              <div v-for="row in ganttRows" :key="row.key" class="pl-week-row">
-                <div class="pl-week-label-cell" :title="row.label">
-                  <div class="pl-week-row-dot" :style="{ background: row.color }" />
-                  <span class="pl-week-row-label">{{ row.label }}</span>
-                </div>
-                <div
-                  v-for="day in ganttDays"
-                  :key="day.dateStr"
-                  class="pl-week-cell pl-week-cell-sm"
-                  :class="{
-                    'is-today':   day.isToday,
-                    'is-weekend': day.isWeekend,
-                    'is-drop':    selectedGanttBlock && !row.ordersByDate[day.dateStr],
-                  }"
-                  @click="handleGanttCellClick(row, day.dateStr)"
-                >
-                  <div
-                    v-if="row.ordersByDate[day.dateStr]"
-                    class="pl-week-block"
-                    :class="{ 'is-selected': selectedGanttBlock?.id === row.ordersByDate[day.dateStr].id }"
-                    :style="{ background: row.color + 'CC', borderColor: row.color }"
-                  >
-                    <span v-if="(row.ordersByDate[day.dateStr].totalDays ?? 0) > 1" class="pl-week-block-badge">
-                      {{ row.ordersByDate[day.dateStr].dayIndex }}/{{ row.ordersByDate[day.dateStr].totalDays }}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-      </div><!-- /pl-col-main -->
-
-      <!-- Right: Calendar + Day orders + Stats + Form ───────────────── -->
-      <div class="pl-col-side">
-
-        <!-- Calendar -->
-        <div class="pl-section">
-          <div class="pl-section-head">
-            <button class="pl-cal-nav" @click="prevMonth">
-              <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
-            </button>
-            <span class="pl-section-title">{{ calTitle }}</span>
-            <button class="pl-cal-nav" @click="nextMonth">
-              <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
-            </button>
-          </div>
-          <div class="pl-cal-body">
-            <div class="pl-cal-weekdays">
-              <div v-for="d in WEEK_HEADERS" :key="d">{{ d }}</div>
-            </div>
-            <div class="pl-cal-days">
-              <div
-                v-for="(cell, idx) in calDays"
-                :key="idx"
-                class="pl-cal-cell"
-                :class="{
-                  'is-empty':    !cell,
-                  'is-today':     cell?.dateStr === todayStr,
-                  'is-selected':  cell?.dateStr === selectedDate,
-                  'has-work':     cell && cell.orders > 0,
-                }"
-                @click="cell && selectDate(cell.dateStr)"
-              >
-                <template v-if="cell">
-                  <span class="pl-cal-num">{{ cell.day }}</span>
-                  <div v-if="cell.orders > 0" class="pl-cal-dots">
-                    <span v-for="n in Math.min(cell.orders, 3)" :key="n" class="pl-cal-dot" />
-                  </div>
-                </template>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Day orders -->
-        <div class="pl-section">
-          <div class="pl-section-head">
-            <span class="pl-section-title">
-              {{ fmtDate(selectedDate) }}
-              <span v-if="selectedDate === todayStr" class="pl-today-tag">OGGI</span>
-            </span>
-            <span class="pl-section-sub">{{ selectedOrders.length }} lavorazioni</span>
-          </div>
-          <div v-if="!selectedOrders.length" class="pl-empty">
-            <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-            Nessuna lavorazione
-          </div>
-          <div v-else class="pl-order-list">
-            <div v-for="wo in selectedOrders" :key="wo.id" class="pl-order-item">
-              <div class="pl-order-bar" :style="{ background: ACT[wo.type]?.color ?? '#888' }" />
-              <div class="pl-order-body">
-                <div class="pl-order-title">
-                  {{ wo.detail }}
-                  <span v-if="wo.groupId && wo.totalDays && wo.totalDays > 1" class="pl-day-badge">
-                    {{ wo.dayIndex }}/{{ wo.totalDays }}
-                  </span>
-                </div>
-                <div class="pl-order-meta">
-                  <span class="pl-order-type-tag" :style="{ background: `${ACT[wo.type]?.color}22`, color: ACT[wo.type]?.color }">
-                    {{ ACT[wo.type]?.emoji }} {{ ACT[wo.type]?.label }}
-                  </span>
-                  <span v-if="wo.orderNumber">{{ wo.orderNumber }}</span>
-                  <span v-if="wo.estimatedTime" class="pl-time-chip">⏱ {{ fmtEstimatedTime(wo.estimatedTime) }}</span>
-                </div>
-                <div v-if="wo.note" class="pl-order-note">{{ wo.note }}</div>
-                <a v-if="wo.mapsLink" :href="wo.mapsLink" target="_blank" rel="noopener" class="pl-maps-link">
-                  <svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                  Apri in Maps
-                </a>
-                <div v-if="movingOrderId === wo.id" class="pl-move-form">
-                  <input v-model="moveTargetDate" class="field-input" type="date" />
-                  <button class="pl-move-confirm" @click="confirmMove">Sposta</button>
-                  <button class="pl-btn-ghost-sm" @click="cancelMove">✕</button>
-                </div>
-              </div>
-              <div class="pl-order-actions">
-                <button class="pl-icon-btn" :class="{ active: movingOrderId === wo.id }" title="Sposta" @click="movingOrderId === wo.id ? cancelMove() : startMove(wo)">
-                  <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M8 14h4m0 0l-2-2m2 2l-2 2"/></svg>
-                </button>
-                <button class="pl-icon-btn" title="Modifica" @click="openEditForm(wo)">
-                  <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                </button>
-                <button class="pl-icon-btn pl-icon-btn-danger" title="Elimina" @click="deleteOrder(wo)">
-                  <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6"/></svg>
-                </button>
               </div>
             </div>
           </div>
         </div>
 
         <!-- Week stats -->
-        <div class="pl-section">
+        <div class="pl-stats-section">
           <div class="pl-section-head">
             <span class="pl-section-title">Settimana {{ weekNumber }}</span>
           </div>
-          <div class="pl-stats-grid">
-            <div class="pl-stat">
-              <div class="pl-stat-val">{{ weekStats.count }}</div>
-              <div class="pl-stat-label">Lavorazioni</div>
+          <div class="pl-stat-rows">
+            <div class="pl-stat-row">
+              <span class="pl-stat-lbl">Lavorazioni pianificate</span>
+              <span class="pl-stat-val">{{ weekStats.count }}</span>
             </div>
-            <div class="pl-stat">
-              <div class="pl-stat-val">{{ weekStats.hours }}</div>
-              <div class="pl-stat-label">Ore pianificate</div>
+            <div class="pl-stat-row">
+              <span class="pl-stat-lbl">Ore pianificate</span>
+              <span class="pl-stat-val">{{ weekStats.hours }}</span>
             </div>
-            <div class="pl-stat">
-              <div class="pl-stat-val">{{ weekStats.travel }}</div>
-              <div class="pl-stat-label">Trasferte</div>
+            <div class="pl-stat-row">
+              <span class="pl-stat-lbl">Operatori coinvolti</span>
+              <span class="pl-stat-val">{{ weekOperators.length }}</span>
             </div>
+            <div class="pl-stat-row">
+              <span class="pl-stat-lbl">Trasferte previste</span>
+              <span class="pl-stat-val">{{ weekStats.travel }}</span>
+            </div>
+          </div>
+          <div class="pl-stats-footer">
+            <button class="pl-export-btn" @click="exportCurrentMonth()">
+              <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+              Esporta planning Excel
+            </button>
           </div>
         </div>
 
-        <!-- Add/edit form -->
-        <div class="pl-section">
-          <div class="pl-section-head">
-            <span class="pl-section-title">{{ editingId ? 'Modifica' : 'Nuova lavorazione' }}</span>
-            <button v-if="editingId" class="pl-btn-ghost-sm" @click="cancelForm">Annulla</button>
+      </div><!-- /pl-bottom-row -->
+
+    </div><!-- /pl-content -->
+
+    <!-- ── Form slide-over modal ─────────────────────────────────── -->
+    <Teleport to="body">
+      <div v-if="isFormOpen" class="pl-modal-overlay" @click.self="closeForm()">
+        <div class="pl-modal">
+
+          <div class="pl-modal-head">
+            <span class="pl-modal-title">{{ editingId ? 'Modifica lavorazione' : 'Nuova lavorazione' }}</span>
+            <button class="pl-modal-close" @click="closeForm()">
+              <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
           </div>
+
           <div class="pl-form">
 
-            <!-- Type tabs -->
             <div class="pl-type-tabs">
               <button
                 v-for="t in planningTypes"
@@ -828,38 +658,33 @@ const showGantt = ref(false)
               >{{ ACT[t]?.emoji }} {{ ACT[t]?.label }}</button>
             </div>
 
-            <!-- Posa fields -->
             <template v-if="formData.type === 'posa'">
-              <label class="field-label">N° ordine *</label>
+              <label class="field-label">N° ORDINE *</label>
               <input v-model="formData.orderNumber" class="field-input" type="text" placeholder="es. ORD-2025-001" />
-              <label class="field-label">Attrezzatura *</label>
+              <label class="field-label">ATTREZZATURA *</label>
               <CatalogSelect v-model="formData.detail" value-field="label" />
-              <label class="field-label">Link Maps cantiere</label>
+              <label class="field-label">LINK MAPS CANTIERE</label>
               <input v-model="formData.mapsLink" class="field-input" type="url" placeholder="https://maps.google.com/..." />
             </template>
 
-            <!-- Trasferimento fields -->
             <template v-if="formData.type === 'trasferimento'">
-              <label class="field-label">Destinazione</label>
+              <label class="field-label">DESTINAZIONE</label>
               <input v-model="formData.detail" class="field-input" type="text" placeholder="Es. Parco Comunale..." />
-              <label class="field-label">Viaggio € (prev.)</label>
+              <label class="field-label">VIAGGIO € (PREV.)</label>
               <input v-model.number="formData.travelCostEstimate" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
             </template>
 
-            <!-- Altro fields -->
             <template v-if="formData.type === 'altro'">
-              <label class="field-label">Descrizione *</label>
+              <label class="field-label">DESCRIZIONE *</label>
               <input v-model="formData.detail" class="field-input" type="text" placeholder="Descrizione del lavoro..." />
             </template>
 
-            <!-- Date -->
-            <label class="field-label">Data *</label>
+            <label class="field-label">DATA *</label>
             <input v-model="formData.date" class="field-input" type="date" />
 
-            <!-- Duration + time estimate -->
             <div v-if="!editingId" class="pl-dur-row">
               <div class="pl-dur-col">
-                <label class="field-label">Durata</label>
+                <label class="field-label">DURATA</label>
                 <div class="pl-dur-ctrl">
                   <button type="button" class="pl-dur-btn" @click="formData.estimatedDuration = Math.max(1, formData.estimatedDuration - 1)">−</button>
                   <input v-model.number="formData.estimatedDuration" class="field-input pl-dur-input" type="number" min="1" max="30" />
@@ -868,7 +693,7 @@ const showGantt = ref(false)
                 <span class="pl-dur-hint">{{ formData.estimatedDuration === 1 ? 'giorno lav.' : 'giorni (Lun–Ven)' }}</span>
               </div>
               <div class="pl-dur-col">
-                <label class="field-label">Stima tempo</label>
+                <label class="field-label">STIMA TEMPO</label>
                 <div class="pl-dur-ctrl">
                   <input v-model.number="formData.estimatedTimeH" class="field-input pl-dur-input" type="number" min="0" max="23" placeholder="0" />
                   <span class="pl-dur-sep">h</span>
@@ -880,7 +705,7 @@ const showGantt = ref(false)
 
             <template v-if="editingId">
               <div class="pl-edit-note">ℹ Stai modificando questa singola giornata.</div>
-              <label class="field-label">Stima tempo</label>
+              <label class="field-label">STIMA TEMPO</label>
               <div class="pl-dur-ctrl">
                 <input v-model.number="formData.estimatedTimeH" class="field-input pl-dur-input" type="number" min="0" max="23" placeholder="0" />
                 <span class="pl-dur-sep">h</span>
@@ -889,7 +714,6 @@ const showGantt = ref(false)
               </div>
             </template>
 
-            <!-- Multi-day preview -->
             <div v-if="!editingId && formData.estimatedDuration > 1 && durationPreviewDates.length" class="pl-preview">
               <div class="pl-preview-title">Giornate che verranno create:</div>
               <div class="pl-preview-chips">
@@ -897,9 +721,8 @@ const showGantt = ref(false)
               </div>
             </div>
 
-            <!-- Cost fields (posa + altro) -->
             <template v-if="formData.type === 'posa' || formData.type === 'altro'">
-              <label class="field-label" style="margin-top: 4px">Costi previsione</label>
+              <label class="field-label" style="margin-top:4px">COSTI PREVISIONE</label>
               <div class="pl-cost-grid">
                 <div>
                   <label class="field-label">Pranzo €</label>
@@ -920,8 +743,17 @@ const showGantt = ref(false)
               </div>
             </template>
 
-            <!-- Notes -->
-            <label class="field-label">Note</label>
+            <!-- Move form (visible when editing from backlog) -->
+            <template v-if="editingId && movingOrderId === editingId">
+              <label class="field-label">SPOSTA A DATA</label>
+              <div class="pl-move-form">
+                <input v-model="moveTargetDate" class="field-input" type="date" />
+                <button class="pl-move-confirm" @click="confirmMove">Sposta</button>
+                <button class="pl-btn-ghost-sm" @click="cancelMove">✕</button>
+              </div>
+            </template>
+
+            <label class="field-label">NOTE</label>
             <textarea v-model="formData.note" class="field-input field-textarea" rows="2" placeholder="Note aggiuntive..." />
 
             <button class="pl-save-btn" @click="saveForm">
@@ -929,12 +761,13 @@ const showGantt = ref(false)
               {{ editingId ? 'Salva modifiche' : 'Pianifica' }}
             </button>
 
-          </div>
-        </div>
+            <button v-if="editingId" class="pl-btn-ghost-sm pl-cancel-edit" @click="closeForm">Annulla</button>
 
-      </div><!-- /pl-col-side -->
+          </div><!-- /pl-form -->
 
-    </div><!-- /pl-grid -->
+        </div><!-- /pl-modal -->
+      </div>
+    </Teleport>
 
   </div>
 </template>
@@ -949,70 +782,93 @@ const showGantt = ref(false)
   overflow: hidden;
 }
 
+// ── Top bar ───────────────────────────────────────────────────────────
 .pl-top {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 24px 28px 16px;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 24px;
   flex-shrink: 0;
   border-bottom: 1px solid var(--border);
-  flex-wrap: wrap;
 }
 
 .pl-heading {
-  min-width: 0;
+  flex-shrink: 0;
 }
 
 .pl-ws-label {
   font-size: 11px;
   font-weight: 500;
   color: var(--muted);
-  margin-bottom: 3px;
+  margin-bottom: 2px;
 }
 
 .pl-title {
-  font-size: 22px;
+  font-size: 20px;
   font-weight: 700;
   color: var(--ink);
-  margin: 0 0 3px;
+  margin: 0 0 2px;
   line-height: 1.2;
 }
 
-.pl-week-label {
-  font-size: 12px;
-  color: var(--muted-2);
+.pl-week-sub {
+  font-size: 11px;
+  color: var(--muted);
 }
 
+// ── Search ────────────────────────────────────────────────────────────
+.pl-search-wrap {
+  flex: 1;
+  max-width: 420px;
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.pl-search-icon {
+  position: absolute;
+  left: 10px;
+  width: 14px; height: 14px;
+  stroke: var(--muted); fill: none;
+  stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  pointer-events: none;
+}
+
+.pl-search {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--ink);
+  font-family: var(--ff);
+  font-size: 12px;
+  padding: 7px 36px 7px 32px;
+  outline: none;
+  transition: border-color .12s;
+  &:focus { border-color: var(--primary); }
+  &::placeholder { color: var(--muted); }
+}
+
+.pl-search-kbd {
+  position: absolute;
+  right: 8px;
+  font-size: 10px;
+  font-family: var(--ff-mono);
+  color: var(--muted);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 1px 5px;
+  pointer-events: none;
+}
+
+// ── Top actions ───────────────────────────────────────────────────────
 .pl-actions {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-shrink: 0;
-}
-
-.pl-btn-ghost {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 14px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  font-family: var(--ff);
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--muted);
-  cursor: pointer;
-  transition: border-color .12s, color .12s;
-
-  &:hover { border-color: var(--border-strong); color: var(--ink); }
-
-  svg {
-    width: 13px; height: 13px;
-    stroke: currentColor; fill: none;
-    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
-  }
+  margin-left: auto;
 }
 
 .pl-week-nav {
@@ -1023,7 +879,6 @@ const showGantt = ref(false)
   overflow: hidden;
 
   button {
-    width: 34px;
     height: 34px;
     display: flex;
     align-items: center;
@@ -1032,11 +887,14 @@ const showGantt = ref(false)
     border: none;
     cursor: pointer;
     color: var(--muted);
+    font-family: var(--ff);
+    font-size: 12px;
+    font-weight: 500;
     transition: background .12s, color .12s;
+    padding: 0 10px;
 
     &:hover { background: var(--surface-2); color: var(--ink); }
-
-    &:first-child { border-right: 1px solid var(--border); }
+    &:not(:last-child) { border-right: 1px solid var(--border); }
 
     svg {
       width: 14px; height: 14px;
@@ -1046,74 +904,115 @@ const showGantt = ref(false)
   }
 }
 
-// ── Grid ──────────────────────────────────────────────────────────────
-.pl-grid {
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 0;
-  flex: 1;
-  overflow: hidden;
+.pl-oggi-nav-btn {
+  padding: 0 14px !important;
+  font-weight: 600 !important;
 }
 
-.pl-col-main {
+.pl-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px;
+  height: 34px;
+  background: var(--primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--ff);
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  transition: filter .12s;
+  &:hover  { filter: brightness(1.1); }
+  &:active { filter: brightness(.9); }
+  svg {
+    width: 14px; height: 14px;
+    stroke: currentColor; fill: none;
+    stroke-width: 2.5; stroke-linecap: round;
+  }
+}
+
+.pl-bell-btn {
+  width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+  transition: color .12s, background .12s;
+  &:hover { color: var(--ink); background: var(--surface-2); }
+  svg {
+    width: 16px; height: 16px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  }
+}
+
+// ── Content area ──────────────────────────────────────────────────────
+.pl-content {
+  flex: 1;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 0;
-  overflow-y: auto;
+}
+
+// ── Operator weekly grid ──────────────────────────────────────────────
+.pl-og-wrap {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+$op-col: 188px;
+
+.pl-og-header,
+.pl-og-row {
+  display: grid;
+  grid-template-columns: $op-col repeat(7, 1fr);
+  min-width: 860px;
+}
+
+.pl-og-header {
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.pl-og-op-col-hdr {
+  padding: 8px 14px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--muted);
   border-right: 1px solid var(--border);
 }
 
-.pl-col-side {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  overflow-y: auto;
-}
-
-// ── Section ───────────────────────────────────────────────────────────
-.pl-section {
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-
-  &:last-child { border-bottom: none; }
-}
-
-.pl-section-head {
+.pl-og-day-col-hdr {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 18px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
+  gap: 6px;
+  padding: 8px 10px;
+  border-right: 1px solid var(--border);
+  &:last-child { border-right: none; }
+
+  &.is-today   { background: rgba(245, 165, 36, .1); }
+  &.is-weekend { background: rgba(255,255,255,.02); }
 }
 
-.pl-section-head-toggle {
-  cursor: pointer;
-  user-select: none;
-  &:hover { background: var(--surface-2); }
-}
-
-.pl-section-title {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--ink);
-  flex: 1;
-}
-
-.pl-section-sub {
+.pl-og-day-name {
   font-size: 11px;
+  font-weight: 600;
   color: var(--muted);
+
+  .is-today & { color: var(--live); }
 }
 
-.pl-toggle-arrow {
-  width: 14px; height: 14px;
-  stroke: var(--muted); fill: none;
-  stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
-  transition: transform .15s;
-  &.open { transform: rotate(180deg); }
-}
-
-.pl-today-tag {
+.pl-oggi-pill {
   display: inline-block;
   background: var(--live);
   color: #fff;
@@ -1122,16 +1021,123 @@ const showGantt = ref(false)
   letter-spacing: .5px;
   padding: 1px 5px;
   border-radius: 10px;
-  margin-left: 5px;
-  vertical-align: middle;
+  line-height: 1.5;
 }
 
+.pl-og-row {
+  border-bottom: 1px solid var(--border);
+  &:last-child { border-bottom: none; }
+  &:hover { background: rgba(255,255,255,.01); }
+}
+
+.pl-og-op-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-right: 1px solid var(--border);
+}
+
+.pl-op-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.pl-op-info { min-width: 0; }
+
+.pl-op-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pl-op-role {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.pl-og-day-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-right: 1px solid var(--border);
+  min-height: 56px;
+  cursor: pointer;
+  transition: background .1s;
+
+  &:last-child  { border-right: none; }
+  &.is-today    { background: rgba(245, 165, 36, .05); }
+  &.is-weekend  { background: rgba(255,255,255,.015); }
+  &:hover       { background: rgba(255,255,255,.03); }
+  &.is-today:hover { background: rgba(245, 165, 36, .1); }
+}
+
+// ── Job pills ─────────────────────────────────────────────────────────
+.pl-pill {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: background .1s, border-color .1s;
+  max-width: 100%;
+
+  &:hover { background: var(--surface-3); border-color: var(--primary); }
+
+  &.pl-pill-live {
+    background: rgba(245, 165, 36, .12);
+    border-color: rgba(245, 165, 36, .35);
+  }
+  &.pl-pill-travel {
+    background: rgba(59, 130, 246, .1);
+    border-color: rgba(59, 130, 246, .3);
+  }
+}
+
+.pl-pill-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.pl-pill-text {
+  color: var(--ink);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pl-pill-loc {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+// ── Empty state ───────────────────────────────────────────────────────
 .pl-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 8px;
-  padding: 28px 20px;
+  padding: 32px 20px;
   color: var(--muted);
   font-size: 12px;
   text-align: center;
@@ -1144,196 +1150,64 @@ const showGantt = ref(false)
   }
 }
 
-// ── Weekly gantt grid ─────────────────────────────────────────────────
-.pl-gantt-toolbar {
+// ── Bottom row ────────────────────────────────────────────────────────
+.pl-bottom-row {
+  display: grid;
+  grid-template-columns: 3fr 1fr;
+  flex: 1;
+  min-height: 0;
+  border-top: 1px solid var(--border);
+}
+
+.pl-backlog-section {
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pl-stats-section {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+// ── Section head ──────────────────────────────────────────────────────
+.pl-section-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--surface);
-  border-bottom: 1px solid var(--live);
-  padding: 8px 18px;
-  flex-wrap: wrap;
-}
-
-.pl-gantt-toolbar-label {
-  flex: 1;
-  font-size: 12px;
-  color: var(--ink);
-  min-width: 120px;
-}
-
-.pl-gantt-date-input {
-  flex: 0 0 auto;
-  padding: 5px 8px;
-  font-size: 12px;
-  background: var(--surface-2);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-xs);
-  color: var(--ink);
-  font-family: var(--ff);
-  outline: none;
-  &:focus { border-color: var(--live); }
-}
-
-.pl-gantt-confirm {
-  padding: 5px 12px;
-  background: var(--live);
-  color: #fff;
-  border: none;
-  border-radius: var(--radius-xs);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: var(--ff);
-}
-
-.pl-gantt-cancel {
-  padding: 5px 10px;
-  background: var(--surface-2);
-  color: var(--muted);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-xs);
-  font-size: 12px;
-  cursor: pointer;
-  font-family: var(--ff);
-  &:hover { color: var(--ink); }
-}
-
-.pl-week-wrap {
-  overflow-x: auto;
-
-  &.pl-week-wrap-scroll {
-    max-height: 260px;
-    overflow-y: auto;
-  }
-}
-
-.pl-week-header {
-  display: flex;
+  padding: 11px 18px;
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  background: var(--surface);
-  z-index: 2;
-}
-
-.pl-week-row {
-  display: flex;
-  border-bottom: 1px solid var(--border);
-  &:last-child { border-bottom: none; }
-  &:hover { background: rgba(255,255,255,.015); }
-}
-
-.pl-week-label-cell {
-  flex: 0 0 180px;
-  min-width: 180px;
-  padding: 6px 12px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  border-right: 1px solid var(--border);
-  position: sticky;
-  left: 0;
-  background: var(--surface);
-  z-index: 1;
-}
-
-.pl-week-label-hdr {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .5px;
-  color: var(--muted);
-}
-
-.pl-week-row-dot {
-  width: 7px; height: 7px;
-  border-radius: 50%;
   flex-shrink: 0;
 }
 
-.pl-week-row-label {
-  font-size: 11px;
-  color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 145px;
-}
-
-.pl-week-day-hdr {
-  flex: 1;
-  min-width: 60px;
-  text-align: center;
-  padding: 6px 4px;
-  border-right: 1px solid var(--border);
-  &:last-child { border-right: none; }
-  &.is-weekend { background: rgba(255,255,255,.02); }
-  &.is-today   { background: rgba(245, 165, 36, .1); }
-}
-
-.pl-week-day-hdr-sm {
-  flex: 0 0 36px;
-  min-width: 36px;
-}
-
-.pl-week-day-name {
-  font-size: 9px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .3px;
-  color: var(--muted);
-  line-height: 1.2;
-}
-
-.pl-week-day-num {
+.pl-section-title {
   font-size: 12px;
   font-weight: 600;
   color: var(--ink);
-
-  .is-today & { color: var(--live); }
-}
-
-.pl-week-cell {
   flex: 1;
-  min-width: 60px;
-  min-height: 38px;
-  padding: 4px;
-  border-right: 1px solid var(--border);
-  cursor: default;
-  &:last-child { border-right: none; }
-  &.is-weekend { background: rgba(255,255,255,.015); }
-  &.is-today   { background: rgba(245, 165, 36, .06); }
-  &.is-drop    { cursor: crosshair; &:hover { background: rgba(245, 165, 36, .08); } }
 }
 
-.pl-week-cell-sm {
-  flex: 0 0 36px;
-  min-width: 36px;
-}
-
-.pl-week-block {
-  height: 100%;
-  min-height: 30px;
-  border-radius: var(--radius-xs);
-  border: 1px solid transparent;
-  display: flex;
+.pl-count-badge {
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
-  transition: filter .1s;
-  &:hover   { filter: brightness(1.1); }
-  &.is-selected { box-shadow: 0 0 0 2px var(--live); }
-}
-
-.pl-week-block-badge {
-  font-size: 9px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  font-size: 11px;
   font-weight: 700;
-  color: rgba(255,255,255,.9);
+  color: var(--muted);
 }
 
-// ── Backlog ───────────────────────────────────────────────────────────
+// ── Backlog list ──────────────────────────────────────────────────────
 .pl-backlog-list {
+  flex: 1;
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
 }
@@ -1342,8 +1216,9 @@ const showGantt = ref(false)
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  padding: 12px 18px;
+  padding: 11px 18px;
   border-bottom: 1px solid var(--border);
+  cursor: pointer;
   transition: background .1s;
   &:last-child { border-bottom: none; }
   &:hover { background: var(--surface-2); }
@@ -1372,14 +1247,15 @@ const showGantt = ref(false)
 .pl-backlog-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
   font-size: 11px;
   color: var(--muted);
 
   span {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 4px;
+    gap: 3px;
   }
 
   svg {
@@ -1387,6 +1263,25 @@ const showGantt = ref(false)
     stroke: currentColor; fill: none;
     stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
   }
+}
+
+.pl-backlog-avatars {
+  display: inline-flex;
+  gap: -4px;
+
+  & > span + span { margin-left: -6px; }
+}
+
+.pl-backlog-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  font-size: 8px;
+  font-weight: 700;
+  color: #fff;
+  border: 1px solid var(--surface);
 }
 
 .pl-backlog-right {
@@ -1414,9 +1309,138 @@ const showGantt = ref(false)
   border-radius: 10px;
 }
 
-// ── Calendar ──────────────────────────────────────────────────────────
-.pl-cal-nav {
+.pl-backlog-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+// ── Stats section ─────────────────────────────────────────────────────
+.pl-stat-rows {
+  padding: 4px 0;
+  flex: 1;
+}
+
+.pl-stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 18px;
+  border-bottom: 1px solid var(--border);
+  &:last-child { border-bottom: none; }
+}
+
+.pl-stat-lbl {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.pl-stat-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.pl-stats-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.pl-export-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-family: var(--ff);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background .12s, color .12s;
+  &:hover { background: var(--surface-3); color: var(--ink); }
+  svg {
+    width: 13px; height: 13px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  }
+}
+
+// ── Icon buttons ──────────────────────────────────────────────────────
+.pl-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   width: 26px; height: 26px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background .12s, color .12s;
+  &:hover { background: var(--surface-2); color: var(--ink); }
+  &.pl-icon-btn-danger:hover { background: var(--err-soft); color: var(--err); border-color: var(--err); }
+  svg {
+    width: 12px; height: 12px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  }
+}
+
+// ── Modal ─────────────────────────────────────────────────────────────
+.pl-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .45);
+  z-index: 200;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+}
+
+.pl-modal {
+  width: 380px;
+  max-width: 100vw;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  animation: slide-from-right .2s ease-out;
+}
+
+@keyframes slide-from-right {
+  from { transform: translateX(40px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+.pl-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+
+.pl-modal-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.pl-modal-close {
+  width: 28px; height: 28px;
   display: flex; align-items: center; justify-content: center;
   background: transparent;
   border: none;
@@ -1428,113 +1452,16 @@ const showGantt = ref(false)
   svg {
     width: 14px; height: 14px;
     stroke: currentColor; fill: none;
-    stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+    stroke-width: 2; stroke-linecap: round;
   }
 }
 
-.pl-cal-body { padding: 8px 12px 12px; }
-
-.pl-cal-weekdays {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  margin-bottom: 4px;
-
-  div {
-    text-align: center;
-    font-size: 10px;
-    font-weight: 600;
-    color: var(--muted);
-    letter-spacing: .3px;
-  }
-}
-
-.pl-cal-days {
-  display: grid;
-  grid-template-columns: repeat(7, 1fr);
-  gap: 2px;
-}
-
-.pl-cal-cell {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  aspect-ratio: 1;
-  border-radius: var(--radius-xs);
-  cursor: pointer;
-  min-height: 28px;
-  transition: background .1s;
-
-  &.is-empty { pointer-events: none; }
-  &:hover:not(.is-empty) { background: var(--surface-2); }
-
-  &.is-today .pl-cal-num {
-    background: var(--live);
-    color: #fff;
-    border-radius: 50%;
-    width: 20px; height: 20px;
-    display: flex; align-items: center; justify-content: center;
-  }
-
-  &.is-selected:not(.is-today) {
-    background: rgba(245, 165, 36, .15);
-    .pl-cal-num { color: var(--live); font-weight: 700; }
-  }
-}
-
-.pl-cal-num {
-  font-size: 11px;
-  color: var(--ink);
-  line-height: 1;
-}
-
-.pl-cal-dots {
-  display: flex;
-  gap: 2px;
-  margin-top: 2px;
-}
-
-.pl-cal-dot {
-  width: 3px; height: 3px;
-  border-radius: 50%;
-  background: var(--live);
-}
-
-// ── Week stats ────────────────────────────────────────────────────────
-.pl-stats-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 1px;
-  background: var(--border);
-}
-
-.pl-stat {
-  padding: 14px 12px;
-  background: var(--surface);
-  text-align: center;
-}
-
-.pl-stat-val {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-  margin-bottom: 4px;
-}
-
-.pl-stat-label {
-  font-size: 10px;
-  color: var(--muted);
-  font-weight: 500;
-}
-
-// ── Form ──────────────────────────────────────────────────────────────
+// ── Form (inside modal) ───────────────────────────────────────────────
 .pl-form {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 14px 16px;
+  padding: 16px;
 }
 
 .pl-type-tabs {
@@ -1724,6 +1651,7 @@ const showGantt = ref(false)
 .pl-btn-ghost-sm {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   padding: 4px 10px;
   background: transparent;
   border: 1px solid var(--border);
@@ -1735,109 +1663,15 @@ const showGantt = ref(false)
   &:hover { background: var(--surface-2); color: var(--ink); }
 }
 
-// ── Day orders ────────────────────────────────────────────────────────
-.pl-order-list { display: flex; flex-direction: column; }
-
-.pl-order-item {
-  display: flex;
-  align-items: stretch;
-  gap: 10px;
-  padding: 11px 18px;
-  border-bottom: 1px solid var(--border);
-  &:last-child { border-bottom: none; }
-}
-
-.pl-order-bar {
-  width: 3px;
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-
-.pl-order-body { flex: 1; min-width: 0; }
-
-.pl-order-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.pl-order-meta {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 3px;
-  font-size: 11px;
-  color: var(--muted);
-}
-
-.pl-order-type-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 1px 6px;
-  border-radius: 10px;
-  font-size: 10px;
-  font-weight: 600;
-}
-
-.pl-order-note {
-  font-size: 11px;
-  color: var(--muted);
-  margin-top: 3px;
-  font-style: italic;
-}
-
-.pl-maps-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  margin-top: 4px;
-  font-size: 11px;
-  color: #4db6ac;
-  text-decoration: none;
-  font-weight: 500;
-  &:hover { text-decoration: underline; }
-  svg {
-    width: 11px; height: 11px;
-    stroke: currentColor; fill: none;
-    stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
-  }
-}
-
-.pl-time-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--ok-ink);
-  background: var(--ok-soft);
-  padding: 1px 6px;
-  border-radius: 10px;
-}
-
-.pl-day-badge {
-  display: inline-block;
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--muted);
-  background: var(--surface-3);
-  border: 1px solid var(--border-strong);
-  padding: 1px 5px;
-  border-radius: 10px;
-  margin-left: 5px;
-  vertical-align: middle;
+.pl-cancel-edit {
+  width: 100%;
+  margin-top: -4px;
 }
 
 .pl-move-form {
   display: flex;
   align-items: center;
   gap: 5px;
-  margin-top: 7px;
   flex-wrap: wrap;
 }
 
@@ -1853,31 +1687,33 @@ const showGantt = ref(false)
   font-family: var(--ff);
 }
 
-.pl-order-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  flex-shrink: 0;
-}
-
-.pl-icon-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px; height: 28px;
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-xs);
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-  transition: background .12s, color .12s;
-  &:hover { background: var(--surface-2); color: var(--ink); }
-  &.active { background: var(--live-soft); color: var(--live); border-color: var(--live); }
-  &.pl-icon-btn-danger:hover { background: var(--err-soft); color: var(--err); border-color: var(--err); }
-  svg {
-    width: 13px; height: 13px;
-    stroke: currentColor; fill: none;
-    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
-  }
+@media (min-width: 800px) {
+  .pl-ws-label       { font-size: 13px; }
+  .pl-title          { font-size: 22px; }
+  .pl-week-sub       { font-size: 13px; }
+  .pl-search         { font-size: 14px; }
+  .pl-week-nav button { font-size: 14px; }
+  .pl-btn-primary    { font-size: 15px; }
+  .pl-og-day-name    { font-size: 13px; }
+  .pl-op-name        { font-size: 14px; }
+  .pl-pill           { font-size: 13px; }
+  .pl-empty          { font-size: 14px; }
+  .pl-section-title  { font-size: 14px; }
+  .pl-count-badge    { font-size: 13px; }
+  .pl-backlog-id     { font-size: 13px; }
+  .pl-backlog-detail { font-size: 15px; }
+  .pl-backlog-meta   { font-size: 13px; }
+  .pl-stat-lbl       { font-size: 14px; }
+  .pl-stat-val       { font-size: 16px; }
+  .pl-export-btn     { font-size: 14px; }
+  .pl-modal-title    { font-size: 16px; }
+  .pl-type-tab       { font-size: 13px; }
+  .field-input,
+  .field-textarea    { font-size: 14px; }
+  .pl-dur-sep        { font-size: 13px; }
+  .pl-edit-note      { font-size: 13px; }
+  .pl-btn-ghost-sm   { font-size: 13px; }
+  .pl-save-btn       { font-size: 15px; }
+  .pl-move-confirm   { font-size: 13px; }
 }
 </style>

@@ -1,256 +1,26 @@
 <script setup lang="ts">
-/**
- * SummaryView – Vista Riepilogo Giornaliero
- * ─────────────────────────────────────────────────────────────────────
- * Solo DESKTOP. Mostra per un giorno selezionato:
- *   - 3 box statistici (tempo totale, conteggio attività, km stimati)
- *   - Mappa Leaflet con percorso e marker numerati
- *   - Grafico doughnut distribuzione tempo per tipo (Chart.js)
- *   - Timeline cronologica con posizioni GPS e foto
- *   - Navigazione ← → tra i giorni + selettore data
- *   - Bottoni export PDF/Excel
- *
- * Dipendenze esterne (browser-only, caricamento dinamico in onMounted):
- *   - leaflet
- *   - chart.js
- */
-import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
-import { useAppState }  from '~/composables/useAppState'
-import { useStore }     from '~/composables/useStore'
-import { useGeo }       from '~/composables/useGeo'
-import { useExport }    from '~/composables/useExport'
-import { ACT }          from '~/constants'
-import type { Activity } from '~/types'
-import { photoSrc } from '~/types'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useAppState } from '~/composables/useAppState'
+import { useStore }    from '~/composables/useStore'
+import { useAuth }     from '~/composables/useAuth'
+import { useGeo }      from '~/composables/useGeo'
+import { ACT }         from '~/constants'
+import type { WorkOrder, Activity } from '~/types'
 
 const appState = useAppState()
 const store    = useStore()
+const auth     = useAuth()
 const geo      = useGeo()
-const exporter = useExport()
 
-// ── Data selezionata ──────────────────────────────────────────────────
-const selectedDate = ref(todayStr())
+// ────────────────────────────────────────────────────────────────────────────
+// Shared helpers
+// ────────────────────────────────────────────────────────────────────────────
 
-/** Ritorna la data di oggi come stringa YYYY-MM-DD (fuso locale) */
 function todayStr(): string {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-/** Attività del giorno selezionato, ordinate cronologicamente */
-const dayActivities = computed<Activity[]>(() =>
-  store.forDate(selectedDate.value).slice().sort((a, b) => a.startTime - b.startTime)
-)
-
-const completedActivities = computed<Activity[]>(() =>
-  dayActivities.value.filter(a => !(a.isPlanned && a.duration === 0))
-)
-
-const pendingPlannedActivities = computed<Activity[]>(() =>
-  dayActivities.value.filter(a => a.isPlanned && a.duration === 0)
-)
-
-// ── Navigazione tra giorni ─────────────────────────────────────────────
-
-/** Sposta la data di `delta` giorni */
-function changeDay(delta: number): void {
-  const d = new Date(selectedDate.value + 'T12:00:00')
-  d.setDate(d.getDate() + delta)
-  selectedDate.value = d.toISOString().split('T')[0]
-}
-
-// ── Statistiche ───────────────────────────────────────────────────────
-
-const statTime = computed(() => {
-  const completed = dayActivities.value.filter(a => a.duration !== null)
-  const totalSec  = completed.reduce((s, a) => s + (a.duration ?? 0), 0)
-  return totalSec ? fmtDur(totalSec) : '—'
-})
-
-const statCount = computed(() => dayActivities.value.length)
-
-const statKm = computed(() => {
-  const points = dayActivities.value.map(a => a.startLoc).filter(Boolean)
-  let total = 0
-  for (let i = 1; i < points.length; i++) total += geo.dist(points[i - 1]!, points[i]!)
-  return total > 0.05 ? total.toFixed(1) : '—'
-})
-
-// ── Mappa Leaflet ─────────────────────────────────────────────────────
-
-let mapInstance:  any = null  // istanza Leaflet (any per evitare problemi di tipo SSR)
-let mapLib:       any = null  // modulo leaflet importato dinamicamente
-
-async function renderMap(): Promise<void> {
-  if (!mapLib) mapLib = (await import('leaflet')).default
-
-  const L = mapLib
-
-  // Distruggi la mappa precedente per evitare memory leak
-  if (mapInstance) {
-    mapInstance.remove()
-    mapInstance = null
-  }
-
-  await nextTick()
-  const mapEl = document.getElementById('map')
-  if (!mapEl) return
-
-  mapInstance = L.map('map', { zoomControl: true, attributionControl: false })
-
-  // Tile layer OpenStreetMap (gratuito, no API key)
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 })
-    .addTo(mapInstance)
-
-  L.control.attribution({ prefix: '© <a href="https://openstreetmap.org">OpenStreetMap</a>' })
-    .addTo(mapInstance)
-
-  const acts      = dayActivities.value
-  const allPoints: [number, number][] = []
-
-  acts.forEach(a => {
-    if (a.startLoc) allPoints.push([a.startLoc.lat, a.startLoc.lng])
-    if (a.endLoc)   allPoints.push([a.endLoc.lat,   a.endLoc.lng])
-  })
-
-  // Nessun punto GPS: centra sull'area Vicenza (default azienda)
-  if (!allPoints.length) {
-    mapInstance.setView([45.55, 11.53], 9)
-    return
-  }
-
-  // Linea tratteggiata che collega tutti i punti del percorso
-  L.polyline(allPoints, { color: '#FF5F00', weight: 3, opacity: 0.65, dashArray: '8, 6' })
-    .addTo(mapInstance)
-
-  // Marker numerati per ogni attività
-  acts.forEach((a, index) => {
-    if (!a.startLoc) return
-    const color = ACT[a.type]?.color || '#888'
-
-    // Icona HTML personalizzata: cerchio colorato con numero progressivo
-    const markerIcon = L.divIcon({
-      className: '',
-      html: `<div style="
-        width:26px;height:26px;background:${color};
-        border:3px solid white;border-radius:50%;
-        box-shadow:0 3px 10px rgba(0,0,0,.45);
-        display:flex;align-items:center;justify-content:center;
-        font-size:11px;font-weight:800;color:#fff;
-        font-family:'Barlow Condensed',sans-serif;
-      ">${index + 1}</div>`,
-      iconSize:   [26, 26],
-      iconAnchor: [13, 13],
-    })
-
-    const startDt  = new Date(a.startTime)
-    const timeStr  = `${String(startDt.getHours()).padStart(2, '0')}:${String(startDt.getMinutes()).padStart(2, '0')}`
-    const photoInfo = (a.photos?.length) ? `<br><small>📸 ${a.photos.length} foto</small>` : ''
-
-    L.marker([a.startLoc.lat, a.startLoc.lng], { icon: markerIcon })
-      .addTo(mapInstance)
-      .bindPopup(`
-        <strong style="font-size:13px">${ACT[a.type]?.emoji} ${ACT[a.type]?.label}</strong><br>
-        <span style="font-size:12px">${a.detail}</span><br>
-        <small style="color:#666">
-          Inizio: ${timeStr}${a.duration ? ' · ' + fmtDur(a.duration) : ''}
-        </small>${photoInfo}
-      `)
-
-    // Marker secondario per la posizione di fine (se significativamente diversa)
-    if (a.endLoc && geo.dist(a.startLoc, a.endLoc) > 0.01) {
-      const endIcon = L.divIcon({
-        className: '',
-        html: `<div style="width:12px;height:12px;background:${color};border:2px solid white;border-radius:50%;opacity:.65;box-shadow:0 1px 5px rgba(0,0,0,.4)"></div>`,
-        iconSize:   [12, 12],
-        iconAnchor: [6, 6],
-      })
-      L.marker([a.endLoc.lat, a.endLoc.lng], { icon: endIcon }).addTo(mapInstance)
-    }
-  })
-
-  mapInstance.fitBounds(L.latLngBounds(allPoints), { padding: [28, 28], maxZoom: 16 })
-}
-
-// ── Grafico Doughnut (Chart.js) ────────────────────────────────────────
-
-let chartInstance: any = null
-
-/** Dati aggregati per tipo: { tipo: secondi_totali } */
-const chartTotals = computed(() => {
-  const totals: Record<string, number> = {}
-  dayActivities.value.forEach(a => {
-    if (a.duration !== null) {
-      totals[a.type] = (totals[a.type] || 0) + (a.duration ?? 0)
-    }
-  })
-  return totals
-})
-
-const chartTypes = computed(() => Object.keys(chartTotals.value))
-
-async function renderChart(): Promise<void> {
-  const { Chart, registerables } = await import('chart.js')
-  Chart.register(...registerables)
-
-  if (chartInstance) {
-    chartInstance.destroy()
-    chartInstance = null
-  }
-
-  const canvas = document.getElementById('pie-chart') as HTMLCanvasElement | null
-  if (!canvas || !chartTypes.value.length) return
-
-  chartInstance = new Chart(canvas.getContext('2d')!, {
-    type: 'doughnut',
-    data: {
-      labels:   chartTypes.value.map(t => ACT[t]?.label || t),
-      datasets: [{
-        data:            chartTypes.value.map(t => chartTotals.value[t]),
-        backgroundColor: chartTypes.value.map(t => ACT[t]?.color || '#888'),
-        borderColor:     '#1C1C1C',
-        borderWidth:     4,
-      }],
-    },
-    options: {
-      responsive:          true,
-      maintainAspectRatio: false,
-      cutout:              '68%',
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: { label: (ctx: any) => ` ${fmtDur(ctx.raw)}` },
-          backgroundColor: '#242424',
-          borderColor:     '#3E3E3E',
-          borderWidth:     1,
-          titleColor:      '#F0F0F0',
-          bodyColor:       '#aaa',
-        },
-      },
-    },
-  })
-}
-
-// ── Re-render al cambio data ──────────────────────────────────────────
-
-watch(selectedDate, async () => {
-  await nextTick()
-  await renderMap()
-  await renderChart()
-})
-
-// ── Render al mount (solo se la vista è visibile) ─────────────────────
-watch(() => appState.currentView.value, async (view) => {
-  if (view === 'summary') {
-    await nextTick()
-    await renderMap()
-    await renderChart()
-  }
-})
-
-// ── Utility ──────────────────────────────────────────────────────────
-
-/** Formatta secondi: "45s" | "23m" | "2h 15m" */
 function fmtDur(seconds: number): string {
   if (seconds >= 3600) {
     const h = Math.floor(seconds / 3600)
@@ -261,114 +31,323 @@ function fmtDur(seconds: number): string {
   return `${seconds}s`
 }
 
-/** Formatta un timestamp come "HH:MM" */
 function fmtTime(ts: number): string {
   const d = new Date(ts)
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
 }
 
-/** Apre il lightbox per una foto */
-function openLightbox(activityId: string, photoIndex: number): void {
-  const activity = store.all().find(a => a.id === activityId)
-  if (!activity?.photos?.[photoIndex]) return
-  appState.openLightbox(photoSrc(activity.photos[photoIndex]))
+// ────────────────────────────────────────────────────────────────────────────
+// MOBILE: lista lavorazioni raggruppate per data
+// ────────────────────────────────────────────────────────────────────────────
+
+type MobileWoFilter = 'all' | 'today' | 'in_corso' | 'completate'
+const mobileFilter = ref<MobileWoFilter>('all')
+const todayDateStr = todayStr()
+
+function getWoTotalTime(wo: WorkOrder): number {
+  return getLinkedActivities(wo)
+    .filter(a => !(a.isPlanned && a.duration === 0))
+    .reduce((s, a) => s + (a.duration ?? 0), 0)
 }
 
-// ── Scontrini del giorno ──────────────────────────────────────────────
+function getWoStatoBadge(stato: WoStato): string {
+  if (stato === 'in_corso' || stato === 'in_viaggio') return 'badge-ok'
+  if (stato === 'completato') return 'badge-ok'
+  return 'badge-muted'
+}
 
-/** Attività pausa_pranzo con almeno uno scontrino */
-const receiptActivities = computed(() =>
-  dayActivities.value.filter(a => a.type === 'pausa_pranzo' && (a.receiptPhotos?.length ?? 0) > 0)
+// Ordina: oggi prima, poi futuri (crescente), poi passati (decrescente)
+function woSortKey(dateStr: string): number {
+  if (dateStr === todayDateStr) return 0
+  if (dateStr > todayDateStr)   return 1
+  return 2
+}
+
+const allWorkOrdersMobile = computed<WorkOrder[]>(() =>
+  store.getAllWorkOrders().slice().sort((a, b) => {
+    const ka = woSortKey(a.date)
+    const kb = woSortKey(b.date)
+    if (ka !== kb) return ka - kb
+    // Entrambi futuri: ordine crescente. Entrambi passati: decrescente.
+    return ka === 2
+      ? b.date.localeCompare(a.date)
+      : a.date.localeCompare(b.date)
+  })
 )
 
-// ── Foto di cantiere ──────────────────────────────────────────────────
-
-const sitePhotos = computed(() => store.getSitePhotos(selectedDate.value))
-
-// ── Cleanup ──────────────────────────────────────────────────────────
-onUnmounted(() => {
-  if (mapInstance) { mapInstance.remove(); mapInstance = null }
-  if (chartInstance) { chartInstance.destroy(); chartInstance = null }
-})
-
-// ── Mobile: lista attività raggruppate per data ───────────────────────
-
-type FilterKey = 'all' | 'today' | 'ongoing' | 'done'
-
-const mobileFilter = ref<FilterKey>('all')
-
-const todayDateStr = (() => {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-})()
-
-const allActivities = computed(() => store.all().slice().sort((a, b) => b.startTime - a.startTime))
-
-const filteredActivities = computed(() => {
-  const acts = allActivities.value
+const filteredWorkOrdersMobile = computed<WorkOrder[]>(() => {
+  void _liveActivity.value  // forza tracciamento anche nel caso 'all'
+  const all = allWorkOrdersMobile.value
   switch (mobileFilter.value) {
-    case 'today':   return acts.filter(a => a.date === todayDateStr)
-    case 'ongoing': return acts.filter(a => a.duration === null)
-    case 'done':    return acts.filter(a => a.duration !== null)
-    default:        return acts
+    case 'today':      return all.filter(wo => wo.date === todayDateStr)
+    case 'in_corso':   return all.filter(wo => getWoStato(wo) === 'in_corso')
+    case 'completate': return all.filter(wo => getWoStato(wo) === 'completato')
+    default:           return all
   }
 })
 
-interface DayGroup {
-  label:      string
-  dateStr:    string
-  activities: typeof allActivities.value
+interface WoDayGroup {
+  label:   string
+  dateStr: string
+  items:   WorkOrder[]
 }
 
-const groupedByDay = computed((): DayGroup[] => {
-  const map = new Map<string, DayGroup>()
-  filteredActivities.value.forEach(a => {
-    if (!map.has(a.date)) {
-      const d = new Date(a.date + 'T12:00:00')
+const groupedWoByDay = computed((): WoDayGroup[] => {
+  const map = new Map<string, WoDayGroup>()
+  filteredWorkOrdersMobile.value.forEach(wo => {
+    if (!map.has(wo.date)) {
+      const d = new Date(wo.date + 'T12:00:00')
       const labels: Record<string, string> = { [todayDateStr]: 'OGGI' }
       const tmrw = new Date(); tmrw.setDate(tmrw.getDate() + 1)
-      const tmrwStr = tmrw.toISOString().split('T')[0]
-      labels[tmrwStr] = 'DOMANI'
-      const dayNames = ['DOM', 'LUN', 'MAR', 'MER', 'GIO', 'VEN', 'SAB']
-      const label = labels[a.date] ?? `${dayNames[d.getDay()]} ${d.getDate()} ${['GEN','FEB','MAR','APR','MAG','GIU','LUG','AGO','SET','OTT','NOV','DIC'][d.getMonth()]}`
-      map.set(a.date, { label, dateStr: a.date, activities: [] })
+      labels[tmrw.toISOString().split('T')[0]] = 'DOMANI'
+      const dayNames = ['DOM','LUN','MAR','MER','GIO','VEN','SAB']
+      const months   = ['GEN','FEB','MAR','APR','MAG','GIU','LUG','AGO','SET','OTT','NOV','DIC']
+      const label = labels[wo.date] ?? `${dayNames[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}`
+      map.set(wo.date, { label, dateStr: wo.date, items: [] })
     }
-    map.get(a.date)!.activities.push(a)
+    map.get(wo.date)!.items.push(wo)
   })
   return Array.from(map.values())
 })
 
-const filterCounts = computed(() => ({
-  all:     allActivities.value.length,
-  today:   allActivities.value.filter(a => a.date === todayDateStr).length,
-  ongoing: allActivities.value.filter(a => a.duration === null).length,
-  done:    allActivities.value.filter(a => a.duration !== null).length,
-}))
-
-function fmtDurMob(seconds: number): string {
-  if (seconds >= 3600) {
-    const h = Math.floor(seconds / 3600)
-    const m = Math.floor((seconds % 3600) / 60)
-    return m > 0 ? `${h}h ${m}m` : `${h}h`
+const mobileFilterCounts = computed(() => {
+  const all = allWorkOrdersMobile.value
+  return {
+    all:        all.length,
+    today:      all.filter(wo => wo.date === todayDateStr).length,
+    in_corso:   all.filter(wo => getWoStato(wo) === 'in_corso').length,
+    completate: all.filter(wo => getWoStato(wo) === 'completato').length,
   }
-  if (seconds >= 60) return `${Math.floor(seconds / 60)}m`
-  return `${seconds}s`
+})
+
+// Computed che avvolge currentActivity — Vue traccia questa dipendenza
+// in qualsiasi contesto reattivo (template, computed, filter)
+const _liveActivity = computed<Activity | null>(() => {
+  const cur = appState.currentActivity.value
+  return (cur && !cur.endTime) ? cur : null
+})
+
+// Live clock — si aggiorna ogni secondo per il tempo elapsed live
+const now = ref(Date.now())
+let _nowInterval: ReturnType<typeof setInterval> | null = null
+onMounted(() => { _nowInterval = setInterval(() => { now.value = Date.now() }, 1000) })
+onUnmounted(() => { if (_nowInterval) { clearInterval(_nowInterval); _nowInterval = null } })
+
+function _isLinkedToWo(act: Activity, wo: WorkOrder): boolean {
+  return act.workOrderId === wo.id ||
+    !!(wo.orderNumber && act.orderNumber === wo.orderNumber && act.date === wo.date)
 }
 
-function fmtTimeMob(ts: number): string {
-  const d = new Date(ts)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+function getWoLiveActivity(wo: WorkOrder): Activity | null {
+  // Prima controlla il computed reattivo (stessa fonte della scheda Oggi)
+  const cur = _liveActivity.value
+  if (cur && _isLinkedToWo(cur, wo)) return cur
+  // Fallback: store (utile dopo reload quando currentActivity è null)
+  return getLinkedActivities(wo).find(
+    a => !a.endTime && !(a.isPlanned && a.duration === 0)
+  ) ?? null
+}
+
+function getWoLiveElapsed(wo: WorkOrder): string {
+  const live = getWoLiveActivity(wo)
+  if (!live) return ''
+  const secs = Math.floor((now.value - live.startTime) / 1000)
+  return fmtDur(Math.max(0, secs))
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// DESKTOP: tabella Lavorazioni (WorkOrders)
+// ────────────────────────────────────────────────────────────────────────────
+
+type WoStato = 'in_corso' | 'in_viaggio' | 'assegnato' | 'pianificato' | 'da_verificare' | 'bloccato' | 'completato'
+type TabKey  = 'tutte' | 'mie' | 'in_corso' | 'pianificate' | 'bloccate' | 'da_verificare'
+
+const searchQuery = ref('')
+const activeTab   = ref<TabKey>('tutte')
+
+const workspaceName  = computed(() => appState.activeWorkspaceName.value || 'Workspace')
+const allWorkOrders  = computed<WorkOrder[]>(() =>
+  store.getAllWorkOrders().slice().sort((a, b) => a.date.localeCompare(b.date))
+)
+
+function getLinkedActivities(wo: WorkOrder): Activity[] {
+  return store.all().filter(a =>
+    a.workOrderId === wo.id ||
+    (wo.orderNumber && a.orderNumber === wo.orderNumber && a.date === wo.date)
+  )
+}
+
+function getWoStato(wo: WorkOrder): WoStato {
+  // Usa il computed reattivo — garantisce ri-render quando la sessione cambia
+  const liveAct = getWoLiveActivity(wo)
+  if (liveAct) return liveAct.type === 'trasferimento' ? 'in_viaggio' : 'in_corso'
+  if (wo.statoManuale === 'completato')    return 'completato'
+  if (wo.statoManuale === 'bloccato')      return 'bloccato'
+  if (wo.statoManuale === 'da_verificare') return 'da_verificare'
+  if (wo.statoManuale === 'in_viaggio')    return 'in_viaggio'
+  if (wo.statoManuale === 'assegnato')     return 'assegnato'
+  return 'assegnato'
+}
+
+function getWoWorkedSecs(wo: WorkOrder): number {
+  return getLinkedActivities(wo)
+    .filter(a => !(a.isPlanned && a.duration === 0))
+    .reduce((s, a) => s + (a.duration ?? 0), 0)
+}
+
+function avBarWidth(workedSecs: number, plannedMins: number): number {
+  return Math.min(115, (workedSecs / (plannedMins * 60)) * 100)
+}
+
+function avBarClass(workedSecs: number, plannedMins: number): string {
+  const pct = (workedSecs / (plannedMins * 60)) * 100
+  if (pct > 110) return 'lav-progress-fill-err'
+  if (pct > 90)  return 'lav-progress-fill-warn'
+  return 'lav-progress-fill-ok'
+}
+
+function avRemainStr(workedSecs: number, plannedMins: number): string {
+  const diff = plannedMins * 60 - workedSecs
+  if (diff < 0) return `+${fmtDur(-diff)} sforato`
+  if (diff === 0) return 'Completato'
+  return `-${fmtDur(diff)} rimanenti`
+}
+
+function avRemainIsOver(workedSecs: number, plannedMins: number): boolean {
+  return workedSecs > plannedMins * 60
+}
+
+interface TableRow { wo: WorkOrder; stato: WoStato; workedSecs: number }
+
+const tableRows = computed((): TableRow[] => {
+  const all = allWorkOrders.value.map(wo => ({
+    wo,
+    stato:      getWoStato(wo),
+    workedSecs: getWoWorkedSecs(wo),
+  }))
+
+  let filtered = all
+  switch (activeTab.value) {
+    case 'in_corso':      filtered = all.filter(r => r.stato === 'in_corso'); break
+    case 'pianificate':   filtered = all.filter(r => r.stato === 'pianificato' || r.stato === 'assegnato'); break
+    case 'bloccate':      filtered = all.filter(r => r.stato === 'bloccato'); break
+    case 'da_verificare': filtered = all.filter(r => r.stato === 'da_verificare'); break
+    case 'mie':           break
+  }
+
+  const q = searchQuery.value.trim().toLowerCase()
+  if (q) {
+    filtered = filtered.filter(r =>
+      r.wo.detail?.toLowerCase().includes(q)       ||
+      r.wo.orderNumber?.toLowerCase().includes(q)  ||
+      (r.wo.cliente ?? '').toLowerCase().includes(q) ||
+      (r.wo.luogo   ?? '').toLowerCase().includes(q)
+    )
+  }
+
+  return filtered
+})
+
+const tabCounts = computed(() => {
+  const stati = allWorkOrders.value.map(wo => getWoStato(wo))
+  return {
+    tutte:         allWorkOrders.value.length,
+    mie:           allWorkOrders.value.length,
+    in_corso:      stati.filter(s => s === 'in_corso').length,
+    pianificate:   stati.filter(s => s === 'pianificato' || s === 'assegnato').length,
+    bloccate:      stati.filter(s => s === 'bloccato').length,
+    da_verificare: stati.filter(s => s === 'da_verificare').length,
+  }
+})
+
+const subtitleCounts = computed(() => {
+  const stati = allWorkOrders.value.map(wo => getWoStato(wo))
+  return {
+    total:    allWorkOrders.value.length,
+    inCorso:  stati.filter(s => s === 'in_corso').length,
+    bloccate: stati.filter(s => s === 'bloccato').length,
+  }
+})
+
+interface ScadenzaFmt { text: string; isOverdue: boolean; isToday: boolean }
+
+function fmtScadenza(dateStr: string): ScadenzaFmt {
+  const today = todayStr()
+  if (dateStr === today) return { text: 'Oggi', isOverdue: false, isToday: true }
+  const yest = (() => { const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().split('T')[0] })()
+  const months = ['gen','feb','mar','apr','mag','giu','lug','ago','set','ott','nov','dic']
+  const [, m, d] = dateStr.split('-').map(Number)
+  const label = `${d} ${months[m - 1]}`
+  if (dateStr === yest) return { text: 'Ieri', isOverdue: true, isToday: false }
+  if (dateStr < today)  return { text: label,  isOverdue: true, isToday: false }
+  return { text: label, isOverdue: false, isToday: false }
+}
+
+function getInitials(name: string): string {
+  return name.split(' ').map(n => n[0] ?? '').join('').toUpperCase().slice(0, 2)
+}
+
+const STATO_META: Record<WoStato, { label: string; cls: string }> = {
+  in_corso:      { label: 'In corso',      cls: 'stato-in-corso'      },
+  in_viaggio:    { label: 'In viaggio',    cls: 'stato-in-viaggio'    },
+  assegnato:     { label: 'Assegnato',     cls: 'stato-assegnato'     },
+  pianificato:   { label: 'Pianificato',   cls: 'stato-pianificato'   },
+  da_verificare: { label: 'Da verificare', cls: 'stato-da-verificare' },
+  bloccato:      { label: 'Bloccato',      cls: 'stato-bloccato'      },
+  completato:    { label: 'Completato',    cls: 'stato-completato'    },
+}
+
+const PRIORITA_META = {
+  urgente: { label: 'Urgente', color: 'var(--err)' },
+  alta:    { label: 'Alta',    color: 'var(--live)' },
+  media:   { label: 'Media',   color: 'var(--muted-2)' },
+  bassa:   { label: 'Bassa',   color: 'var(--muted)' },
+}
+
+// Row context menu
+const menuRowId = ref<string | null>(null)
+
+function toggleRowMenu(woId: string, e: Event): void {
+  e.stopPropagation()
+  menuRowId.value = menuRowId.value === woId ? null : woId
+}
+
+function closeMenu(): void { menuRowId.value = null }
+
+function openDetail(woId: string): void {
+  appState.selectedLavorazioneId.value = woId
+  appState.navigate('lavorazione-detail')
+}
+
+function deleteOrder(wo: WorkOrder): void {
+  closeMenu()
+  if (!confirm(`Eliminare la lavorazione "${wo.detail}"?`)) return
+  if (wo.groupId) {
+    const grpCount = store.getAllWorkOrders().filter(o => o.groupId === wo.groupId).length
+    if (grpCount > 1 && confirm(`Questa è parte di una lavorazione multi-giorno. Eliminare tutti i ${grpCount} giorni?`)) {
+      store.removeWorkOrderGroup(wo.groupId)
+      return
+    }
+  }
+  store.removeWorkOrder(wo.id)
+  appState.showToast('Lavorazione eliminata')
+}
+
+// Avatar colors (stable per initial)
+const AVATAR_COLORS = ['#2D5BFF','#FF5F00','#1F9D55','#8B5CF6','#DC2626','#F5B800']
+function avatarColor(name: string): string {
+  const idx = name.charCodeAt(0) % AVATAR_COLORS.length
+  return AVATAR_COLORS[idx]
 }
 </script>
 
 <template>
 
   <!-- ══════════════════════════════════════════════════════════════
-       MOBILE: Lavori list (schermata "Lavori" del bottom nav)
+       MOBILE: Lavori list (lavorazioni)
        ══════════════════════════════════════════════════════════════ -->
   <div v-if="!appState.isDesktop.value" class="lavori-view">
 
-    <!-- Header -->
     <div class="lavori-header">
       <div class="lavori-title">Lavori</div>
       <button class="lavori-filter-btn">
@@ -376,56 +355,41 @@ function fmtTimeMob(ts: number): string {
       </button>
     </div>
 
-    <!-- Filter tabs -->
     <div class="lavori-tabs">
-      <button class="lavori-tab" :class="{ active: mobileFilter === 'all' }"    @click="mobileFilter = 'all'">Tutti {{ filterCounts.all }}</button>
-      <button class="lavori-tab" :class="{ active: mobileFilter === 'today' }"  @click="mobileFilter = 'today'">Oggi {{ filterCounts.today }}</button>
-      <button class="lavori-tab" :class="{ active: mobileFilter === 'ongoing' }" @click="mobileFilter = 'ongoing'">
-        <span class="lavori-tab-dot" />In corso {{ filterCounts.ongoing }}
+      <button class="lavori-tab" :class="{ active: mobileFilter === 'all' }"        @click="mobileFilter = 'all'">Tutti {{ mobileFilterCounts.all }}</button>
+      <button class="lavori-tab" :class="{ active: mobileFilter === 'today' }"      @click="mobileFilter = 'today'">Oggi {{ mobileFilterCounts.today }}</button>
+      <button class="lavori-tab" :class="{ active: mobileFilter === 'in_corso' }"   @click="mobileFilter = 'in_corso'">
+        <span class="lavori-tab-dot" />In corso {{ mobileFilterCounts.in_corso }}
       </button>
-      <button class="lavori-tab" :class="{ active: mobileFilter === 'done' }"   @click="mobileFilter = 'done'">Completati {{ filterCounts.done }}</button>
+      <button class="lavori-tab" :class="{ active: mobileFilter === 'completate' }" @click="mobileFilter = 'completate'">Completati {{ mobileFilterCounts.completate }}</button>
     </div>
 
-    <!-- Empty state -->
-    <div v-if="!filteredActivities.length" class="lavori-empty">
+    <div v-if="!filteredWorkOrdersMobile.length" class="lavori-empty">
       <svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-      <div class="lavori-empty-title">Nessuna attività</div>
-      <div class="lavori-empty-sub">Avvia un'attività dalla scheda Oggi</div>
+      <div class="lavori-empty-title">Nessuna lavorazione</div>
+      <div class="lavori-empty-sub">Aggiungi lavorazioni dalla scheda Pianificazione</div>
     </div>
 
-    <!-- Grouped by date -->
-    <div v-for="group in groupedByDay" :key="group.dateStr" class="lavori-group">
-      <div class="lavori-group-label">{{ group.label }} · {{ group.activities.length }}</div>
-
-      <div v-for="a in group.activities" :key="a.id" class="lavori-card">
+    <div v-for="group in groupedWoByDay" :key="group.dateStr" class="lavori-group">
+      <div class="lavori-group-label" :class="{ 'lavori-group-label--past': group.dateStr < todayDateStr }">{{ group.label }} · {{ group.items.length }}</div>
+      <div v-for="wo in group.items" :key="wo.id" class="lavori-card" :class="{ 'lavori-card--live': getWoStato(wo) === 'in_corso' || getWoStato(wo) === 'in_viaggio' }" @click="openDetail(wo.id)">
         <div class="lavori-card-top">
           <div class="lavori-card-badges">
-            <!-- Status badge -->
-            <span v-if="a.duration === null" class="badge badge-live">In corso</span>
-            <span v-else class="badge badge-ok">Completato</span>
-            <!-- Type badge -->
-            <span class="badge badge-muted">{{ ACT[a.type]?.label ?? a.type }}</span>
+            <span class="badge" :class="getWoStatoBadge(getWoStato(wo))">{{ STATO_META[getWoStato(wo)].label }}</span>
+            <span class="badge badge-muted">{{ ACT[wo.type]?.label ?? wo.type }}</span>
           </div>
-          <span class="lavori-card-time">{{ fmtTimeMob(a.startTime) }}</span>
+          <span v-if="getWoStato(wo) === 'in_corso' || getWoStato(wo) === 'in_viaggio'" class="lavori-card-time lavori-card-time--live">{{ getWoLiveElapsed(wo) }}</span>
+          <span v-else-if="getWoTotalTime(wo) > 0" class="lavori-card-time">{{ fmtDur(getWoTotalTime(wo)) }}</span>
         </div>
-
-        <div class="lavori-card-name">{{ a.detail || '—' }}</div>
-
+        <div class="lavori-card-name">{{ wo.detail || '—' }}</div>
         <div class="lavori-card-meta">
-          <span v-if="a.startLoc" class="lavori-card-loc">
+          <span v-if="wo.luogo" class="lavori-card-loc">
             <svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
-            {{ geo.shortFmt(a.startLoc) }}
+            {{ wo.luogo }}
           </span>
-          <span v-if="a.duration !== null" class="lavori-card-dur">
-            {{ fmtDurMob(a.duration) }}
-          </span>
-          <span v-if="a.photos?.length" class="lavori-card-photos">
-            <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
-            {{ a.photos.length }}
-          </span>
+          <span v-if="wo.orderNumber" class="lavori-card-photos">{{ wo.orderNumber }}</span>
+          <span v-if="wo.squadra?.length" class="lavori-card-dur">{{ wo.squadra.join(', ') }}</span>
         </div>
-
-        <div v-if="a.note" class="lavori-card-note">{{ a.note }}</div>
       </div>
     </div>
 
@@ -433,523 +397,269 @@ function fmtTimeMob(ts: number): string {
 
 
   <!-- ══════════════════════════════════════════════════════════════
-       DESKTOP: existing summary with map + chart
+       DESKTOP: Lavorazioni table
        ══════════════════════════════════════════════════════════════ -->
-  <div v-else class="view" id="view-summary">
+  <div v-else class="lav-view" id="view-summary" @click="closeMenu">
 
-    <!-- ── Header: titolo + navigazione giorni ────────────────────── -->
-    <div class="page-header">
-      <div class="page-title">Riepilogo</div>
-      <div class="day-nav">
-        <!-- Freccia giorno precedente -->
-        <div class="day-nav-btn" title="Giorno precedente" @click="changeDay(-1)">
-          <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+    <!-- ── Topbar ─────────────────────────────────────────────────── -->
+    <div class="lav-top">
+      <div class="lav-top-left">
+        <div class="lav-breadcrumb">{{ workspaceName }}</div>
+        <div class="lav-title-row">
+          <h1 class="lav-title">Lavorazioni</h1>
+          <span class="lav-subtitle">
+            {{ subtitleCounts.total }} totali
+            <template v-if="subtitleCounts.inCorso > 0"> · <span class="lav-sub-live">{{ subtitleCounts.inCorso }} in corso</span></template>
+            <template v-if="subtitleCounts.bloccate > 0"> · <span class="lav-sub-err">{{ subtitleCounts.bloccate }} bloccate</span></template>
+          </span>
         </div>
-        <!-- Selettore data -->
-        <input
-          v-model="selectedDate"
-          type="date"
-          id="sum-date"
-        >
-        <!-- Freccia giorno successivo -->
-        <div class="day-nav-btn" title="Giorno successivo" @click="changeDay(1)">
-          <svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>
+      </div>
+      <div class="lav-top-center">
+        <div class="lav-search">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input
+            v-model="searchQuery"
+            type="text"
+            placeholder="Cerca lavorazioni, clienti, operatori..."
+          />
+          <kbd>⌘K</kbd>
         </div>
+      </div>
+      <div class="lav-top-right">
+        <button class="lav-btn-ghost">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/></svg>
+          Esporta
+        </button>
+        <button class="lav-btn-fill" @click="appState.navigate('planning')">
+          <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Nuova
+        </button>
+        <button class="lav-bell">
+          <svg viewBox="0 0 24 24"><path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
+        </button>
       </div>
     </div>
 
-    <!-- ── Bottoni esportazione ───────────────────────────────────── -->
-    <div class="export-row">
-      <button class="btn btn-ghost btn-sm btn-icon" @click="exporter.exportPDF(selectedDate)">
-        <svg viewBox="0 0 24 24">
-          <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/>
-          <polyline points="14 2 14 8 20 8"/>
-          <line x1="9" y1="13" x2="15" y2="13"/>
-          <line x1="9" y1="17" x2="15" y2="17"/>
-        </svg>
-        Esporta PDF
-      </button>
-      <button class="btn btn-ghost btn-sm btn-icon" @click="exporter.exportExcel(selectedDate)">
-        <svg viewBox="0 0 24 24">
-          <rect x="3" y="3" width="18" height="18" rx="2"/>
-          <path d="M3 9h18M3 15h18M9 3v18"/>
-        </svg>
-        Esporta Excel
-      </button>
+    <!-- ── Filter tabs ─────────────────────────────────────────────── -->
+    <div class="lav-filter-bar">
+      <div class="lav-tabs">
+        <button class="lav-tab" :class="{ active: activeTab === 'tutte' }"         @click="activeTab = 'tutte'">
+          Tutte <span class="lav-tab-cnt">{{ tabCounts.tutte }}</span>
+        </button>
+        <button class="lav-tab" :class="{ active: activeTab === 'mie' }"           @click="activeTab = 'mie'">
+          Mie <span class="lav-tab-cnt">{{ tabCounts.mie }}</span>
+        </button>
+        <button class="lav-tab lav-tab-live" :class="{ active: activeTab === 'in_corso' }" @click="activeTab = 'in_corso'">
+          In corso <span class="lav-tab-cnt lav-tab-cnt-live">{{ tabCounts.in_corso }}</span>
+        </button>
+        <button class="lav-tab" :class="{ active: activeTab === 'pianificate' }"   @click="activeTab = 'pianificate'">
+          Pianificate <span class="lav-tab-cnt">{{ tabCounts.pianificate }}</span>
+        </button>
+        <button class="lav-tab lav-tab-err" :class="{ active: activeTab === 'bloccate' }" @click="activeTab = 'bloccate'">
+          Bloccate <span class="lav-tab-cnt">{{ tabCounts.bloccate }}</span>
+        </button>
+        <button class="lav-tab" :class="{ active: activeTab === 'da_verificare' }" @click="activeTab = 'da_verificare'">
+          Da verificare <span class="lav-tab-cnt">{{ tabCounts.da_verificare }}</span>
+        </button>
+      </div>
+      <div class="lav-filter-actions">
+        <button class="lav-filter-btn">
+          <svg viewBox="0 0 24 24"><polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"/></svg>
+          Filtri
+        </button>
+        <button class="lav-filter-btn">
+          <svg viewBox="0 0 24 24"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          Ordina · Scadenza
+        </button>
+        <button class="lav-filter-btn">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>
+          Vista · Tabella
+        </button>
+      </div>
     </div>
 
-    <!-- ── Statistiche rapide ─────────────────────────────────────── -->
-    <div class="stats-grid">
-      <div class="stat-box">
-        <div class="stat-val">{{ statTime }}</div>
-        <div class="stat-lbl">Tempo totale</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-val">{{ statCount }}</div>
-        <div class="stat-lbl">Attività</div>
-      </div>
-      <div class="stat-box">
-        <div class="stat-val">{{ statKm }}</div>
-        <div class="stat-lbl">km stimati</div>
-      </div>
-    </div>
+    <!-- ── Table ──────────────────────────────────────────────────── -->
+    <div class="lav-table-wrap">
 
-    <!--
-      Layout desktop: mappa e grafico affiancati (grid 2 col in main.scss).
-      Su mobile si impilano verticalmente.
-    -->
-    <div id="summary-top-row">
-
-      <!-- Mappa Leaflet -->
-      <div>
-        <div class="slabel">MAPPA SPOSTAMENTI</div>
-        <div id="map-wrap"><div id="map" /></div>
-      </div>
-
-      <!-- Grafico doughnut distribuzione tempo -->
-      <div>
-        <div class="slabel">DISTRIBUZIONE TEMPO</div>
-        <div class="card">
-          <div class="card-body">
-
-            <!-- Empty state: nessun dato -->
-            <div v-if="!chartTypes.length" class="empty" style="padding: 24px">
-              <p>Nessun dato da visualizzare</p>
-            </div>
-
-            <!-- Canvas Chart.js -->
-            <div v-else id="chart-wrap">
-              <canvas id="pie-chart" />
-            </div>
-
-            <!-- Legenda custom sotto il grafico -->
-            <div id="chart-legend">
-              <div
-                v-for="t in chartTypes"
-                :key="t"
-                class="legend-row"
-              >
-                <div class="legend-dot" :style="{ background: ACT[t]?.color }" />
-                <span class="legend-name">{{ ACT[t]?.label || t }}</span>
-                <span class="legend-val">{{ fmtDur(chartTotals[t]) }}</span>
-              </div>
-            </div>
-
-          </div>
+      <!-- Empty state -->
+      <div v-if="!tableRows.length" class="lav-empty">
+        <svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+        <div class="lav-empty-title">Nessuna lavorazione</div>
+        <div class="lav-empty-sub">
+          {{ searchQuery ? 'Nessun risultato per la ricerca' : 'Aggiungi una lavorazione dalla Pianificazione' }}
         </div>
+        <button v-if="!searchQuery" class="lav-empty-cta" @click="appState.navigate('planning')">
+          + Nuova lavorazione
+        </button>
       </div>
 
-    </div><!-- /summary-top-row -->
-
-    <!-- ── Timeline cronologica ───────────────────────────────────── -->
-    <div id="summary-bottom-row">
-      <div class="slabel">TIMELINE GIORNATA</div>
-      <div class="card" style="margin-bottom: 16px">
-        <div class="card-body">
-
-          <!-- Empty state -->
-          <div v-if="!completedActivities.length" class="empty">
-            <svg viewBox="0 0 24 24">
-              <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/>
-            </svg>
-            <h3>Nessuna attività</h3>
-            <p>Seleziona una giornata con attività registrate</p>
-          </div>
-
-          <!-- Lista timeline -->
-          <div
-            v-for="(a, index) in completedActivities"
-            :key="a.id"
-            class="tl-item"
+      <table v-else class="lav-table">
+        <thead>
+          <tr>
+            <th class="col-id">ID</th>
+            <th class="col-lav">LAVORAZIONE</th>
+            <th class="col-cli">CLIENTE</th>
+            <th class="col-loc">LOCALITÀ</th>
+            <th class="col-scad">SCADENZA</th>
+            <th class="col-stato">STATO</th>
+            <th class="col-pri">PRIORITÀ</th>
+            <th class="col-sq">SQUADRA</th>
+            <th class="col-av">AVANZAM.</th>
+            <th class="col-act"></th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="row in tableRows"
+            :key="row.wo.id"
+            class="lav-row"
+            @click="openDetail(row.wo.id)"
           >
-            <!-- Linea verticale connettore (non sull'ultimo elemento) -->
-            <div v-if="index < completedActivities.length - 1" class="tl-line" />
+            <!-- ID -->
+            <td class="col-id">
+              <span class="lav-id">{{ row.wo.orderNumber || '—' }}</span>
+            </td>
 
-            <!-- Pallino colorato -->
-            <div class="tl-dot-col">
-              <div class="tl-dot" :style="{ background: ACT[a.type]?.color || '#888' }" />
-            </div>
-
-            <!-- Contenuto testuale + foto -->
-            <div class="tl-body">
-              <!-- Intervallo orario e durata -->
-              <div class="tl-time">
-                {{ fmtTime(a.startTime) }}
-                →
-                {{ a.endTime ? fmtTime(a.endTime) : 'in corso' }}
-                · <strong>{{ a.duration ? fmtDur(a.duration) : '…' }}</strong>
+            <!-- Lavorazione -->
+            <td class="col-lav">
+              <div class="lav-detail">{{ row.wo.detail || '—' }}</div>
+              <div class="lav-type-tag" :style="{ color: ACT[row.wo.type]?.color }">
+                {{ ACT[row.wo.type]?.emoji }} {{ ACT[row.wo.type]?.label }}
               </div>
+            </td>
 
-              <div class="tl-title">{{ a.detail }}</div>
-              <div class="tl-sub">
-                {{ ACT[a.type]?.label || a.type }}
-                <template v-if="a.note"> · {{ a.note }}</template>
-              </div>
+            <!-- Cliente -->
+            <td class="col-cli">
+              <span class="lav-cell-text">{{ row.wo.cliente || '—' }}</span>
+            </td>
 
-              <!-- Posizione GPS inizio -->
-              <div class="tl-loc">
-                <svg viewBox="0 0 24 24">
-                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
-                  <circle cx="12" cy="10" r="3"/>
-                </svg>
-                Inizio: {{ a.startLoc ? `${geo.fmt(a.startLoc)} (±${a.startLoc.acc}m)` : 'N/D' }}
-              </div>
+            <!-- Località -->
+            <td class="col-loc">
+              <span v-if="row.wo.luogo || row.wo.mapsLink" class="lav-loc">
+                <svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                {{ row.wo.luogo || '📍 Maps' }}
+              </span>
+              <span v-else class="lav-cell-muted">—</span>
+            </td>
 
-              <!-- Posizione GPS fine (se disponibile e diversa) -->
-              <div v-if="a.endLoc" class="tl-loc" style="color: var(--muted)">
-                <svg viewBox="0 0 24 24">
-                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
-                  <circle cx="12" cy="10" r="3"/>
-                </svg>
-                Fine: {{ geo.fmt(a.endLoc) }} (±{{ a.endLoc.acc }}m)
-              </div>
+            <!-- Scadenza -->
+            <td class="col-scad">
+              <span
+                class="lav-scad"
+                :class="{
+                  'lav-scad-overdue': fmtScadenza(row.wo.date).isOverdue,
+                  'lav-scad-today':   fmtScadenza(row.wo.date).isToday,
+                }"
+              >{{ fmtScadenza(row.wo.date).text }}</span>
+            </td>
 
-              <!-- Griglia foto (max 8 mostrate) -->
-              <div v-if="a.photos?.length" class="tl-photos">
-                <img
-                  v-for="(p, pi) in a.photos.slice(0, 8)"
-                  :key="pi"
-                  class="tl-photo"
-                  :src="photoSrc(p)"
-                  alt="Foto"
-                  @click="openLightbox(a.id, pi)"
-                >
-                <!-- Badge "+N" se ci sono più di 8 foto -->
-                <div v-if="a.photos.length > 8" class="tl-more-photos">
-                  +{{ a.photos.length - 8 }}
+            <!-- Stato -->
+            <td class="col-stato">
+              <span class="lav-stato-badge" :class="STATO_META[row.stato].cls">
+                {{ STATO_META[row.stato].label }}
+              </span>
+            </td>
+
+            <!-- Priorità -->
+            <td class="col-pri">
+              <template v-if="row.wo.priorita">
+                <span class="lav-pri">
+                  <span class="lav-pri-dot" :style="{ background: PRIORITA_META[row.wo.priorita].color }" />
+                  {{ PRIORITA_META[row.wo.priorita].label }}
+                </span>
+              </template>
+              <span v-else class="lav-cell-muted">—</span>
+            </td>
+
+            <!-- Squadra -->
+            <td class="col-sq">
+              <template v-if="row.wo.squadra?.length">
+                <div class="lav-avatars">
+                  <div
+                    v-for="(name, idx) in row.wo.squadra.slice(0, 3)"
+                    :key="idx"
+                    class="lav-avatar"
+                    :style="{ background: avatarColor(name), zIndex: 3 - idx }"
+                    :title="name"
+                  >{{ getInitials(name) }}</div>
+                  <div v-if="row.wo.squadra.length > 3" class="lav-avatar lav-avatar-more">
+                    +{{ row.wo.squadra.length - 3 }}
+                  </div>
                 </div>
+              </template>
+              <span v-else class="lav-cell-muted">Non assegnato</span>
+            </td>
+
+            <!-- Avanzamento -->
+            <td class="col-av">
+              <template v-if="!row.wo.estimatedTime">
+                <span class="lav-av-unplanned">NON PIANIFICATO</span>
+              </template>
+              <template v-else-if="row.workedSecs === 0">
+                <div class="lav-av">
+                  <div class="lav-progress-bar"><div class="lav-progress-fill" style="width:0%" /></div>
+                  <span class="lav-av-counts">0h / {{ fmtDur(row.wo.estimatedTime * 60) }}</span>
+                  <span class="lav-av-label">Da iniziare</span>
+                </div>
+              </template>
+              <template v-else>
+                <div class="lav-av">
+                  <div class="lav-progress-bar">
+                    <div
+                      class="lav-progress-fill"
+                      :class="avBarClass(row.workedSecs, row.wo.estimatedTime)"
+                      :style="{ width: `${avBarWidth(row.workedSecs, row.wo.estimatedTime)}%` }"
+                    />
+                  </div>
+                  <span class="lav-av-counts">{{ fmtDur(row.workedSecs) }} / {{ fmtDur(row.wo.estimatedTime * 60) }}</span>
+                  <span class="lav-av-remain" :class="avRemainIsOver(row.workedSecs, row.wo.estimatedTime) ? 'lav-av-remain--over' : 'lav-av-remain--ok'">
+                    {{ avRemainStr(row.workedSecs, row.wo.estimatedTime) }}
+                  </span>
+                </div>
+              </template>
+            </td>
+
+            <!-- Actions -->
+            <td class="col-act" @click.stop>
+              <button class="lav-menu-btn" @click="toggleRowMenu(row.wo.id, $event)">
+                <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+              </button>
+              <div v-if="menuRowId === row.wo.id" class="lav-row-menu">
+                <button @click="openDetail(row.wo.id); closeMenu()">
+                  <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                  Apri
+                </button>
+                <button @click="appState.navigate('planning'); closeMenu()">
+                  <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  Modifica
+                </button>
+                <button @click="deleteOrder(row.wo)">
+                  <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6"/></svg>
+                  Elimina
+                </button>
               </div>
+            </td>
 
-            </div>
-          </div>
+          </tr>
+        </tbody>
+      </table>
+    </div><!-- /lav-table-wrap -->
 
-        </div>
-      </div>
-    </div><!-- /summary-bottom-row -->
-
-    <!-- ── Pianificato non eseguito ──────────────────────────────── -->
-    <div v-if="pendingPlannedActivities.length" id="summary-planned-row">
-      <div class="slabel">PIANIFICATO NON ESEGUITO</div>
-      <div class="card" style="margin-bottom: 16px">
-        <div class="card-body">
-          <div
-            v-for="a in pendingPlannedActivities"
-            :key="a.id"
-            class="tl-item"
-          >
-            <div class="tl-dot-col">
-              <div class="tl-dot" :style="{ background: ACT[a.type]?.color || '#888', opacity: 0.4 }" />
-            </div>
-            <div class="tl-body">
-              <div class="tl-time" style="color: var(--muted)">Non eseguito</div>
-              <div class="tl-title" style="color: var(--muted)">{{ a.detail }}</div>
-              <div class="tl-sub">{{ ACT[a.type]?.label || a.type }}<template v-if="a.orderNumber"> · Ord. {{ a.orderNumber }}</template></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Scontrini del giorno (solo desktop) ───────────────────── -->
-    <div v-if="receiptActivities.length" id="summary-receipts-row">
-      <div class="slabel">SCONTRINI PASTO</div>
-      <div class="card" style="margin-bottom: 16px">
-        <div class="card-body">
-          <div
-            v-for="a in receiptActivities"
-            :key="a.id"
-            class="receipt-row"
-          >
-            <div class="receipt-row-time">{{ fmtTime(a.startTime) }}</div>
-            <div class="receipt-row-photos">
-              <img
-                v-for="(p, pi) in a.receiptPhotos"
-                :key="pi"
-                class="receipt-thumb"
-                :src="photoSrc(p)"
-                :alt="`Scontrino ${pi + 1}`"
-                @click="appState.openLightbox(photoSrc(p))"
-              >
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- ── Foto di cantiere del giorno (solo desktop) ─────────────── -->
-    <div v-if="sitePhotos.length" id="summary-sitephotos-row">
-      <div class="slabel">FOTO CANTIERE</div>
-      <div class="card" style="margin-bottom: 16px">
-        <div class="card-body">
-          <div class="site-photos-grid">
-            <img
-              v-for="(p, pi) in sitePhotos"
-              :key="pi"
-              class="site-photo-thumb"
-              :src="photoSrc(p)"
-              :alt="`Cantiere ${pi + 1}`"
-              @click="appState.openLightbox(photoSrc(p))"
-            >
-          </div>
-        </div>
-      </div>
-    </div>
-
-  </div><!-- /view-summary (desktop v-else) -->
+  </div><!-- /lav-view -->
 
 </template>
 
 <style scoped lang="scss">
-/* ──────────────────────────────────────────────────────────────────
-   Statistiche rapide (3 box numerici)
-   ────────────────────────────────────────────────────────────────── */
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.stat-box {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r);
-  padding: 14px 10px;
-  text-align: center;
-}
-
-.stat-val {
-  font-family: 'Barlow Condensed', sans-serif;
-  font-size: 28px;
-  font-weight: 900;
-  color: var(--live);
-  line-height: 1;
-  margin-bottom: 5px;
-  font-variant-numeric: tabular-nums;
-}
-
-.stat-lbl { font-size: 11px; color: var(--muted); font-weight: 500; }
-
-/* ──────────────────────────────────────────────────────────────────
-   Mappa Leaflet
-   ────────────────────────────────────────────────────────────────── */
-#map-wrap {
-  height: 280px; // mobile: altezza compatta (sovrascritta a 420px in main.scss @media)
-  border-radius: var(--r);
-  overflow: hidden;
-  border: 1px solid var(--border);
-
-  @media (max-width: 799px) { margin-bottom: 16px; }
-}
-
-#map { height: 100%; width: 100%; }
-
-/* ──────────────────────────────────────────────────────────────────
-   Grafico doughnut
-   ────────────────────────────────────────────────────────────────── */
-#chart-wrap {
-  position: relative;
-  height: 235px;
-  margin-top: 35px;
-  margin-bottom: -25px;
-}
-
-#chart-legend { margin-top: 16px; }
-
-.legend-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.legend-dot  { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
-.legend-name { flex: 1; font-size: 13px; }
-.legend-val  { font-family: 'Barlow Condensed', sans-serif; font-size: 18px; font-weight: 700; color: var(--muted); }
-
-/* ──────────────────────────────────────────────────────────────────
-   Navigazione giorno (←  data  →)
-   ────────────────────────────────────────────────────────────────── */
-.day-nav { display: flex; align-items: center; gap: 8px; }
-
-.day-nav-btn {
-  width: 34px;
-  height: 34px;
-  background: var(--surface-2);
-  border: 1px solid var(--border2);
-  border-radius: var(--r-xs);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: background .12s;
-
-  &:hover { background: var(--surface3); }
-
-  svg {
-    width: 16px;
-    height: 16px;
-    stroke: var(--ink);
-    fill: none;
-    stroke-width: 2;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
-}
-
-/* Input data inline nella navigazione */
-#sum-date { width: auto; padding: 7px 11px; font-size: 13px; border-radius: var(--r-xs); }
-
-/* Riga bottoni esportazione */
-.export-row { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
-
-/* ──────────────────────────────────────────────────────────────────
-   Timeline giornata
-   Ogni elemento: pallino + linea verticale | contenuto testo + foto
-   ────────────────────────────────────────────────────────────────── */
-.tl-item {
-  display: flex;
-  gap: 14px;
-  position: relative;
-}
-
-/* Linea verticale connettore tra elementi (non sull'ultimo) */
-.tl-line {
-  position: absolute;
-  left: 10px; // centrata sul pallino (larghezza 22px → centro a 11px)
-  top: 23px;
-  bottom: -4px;
-  width: 2px;
-  background: var(--border);
-}
-
-.tl-dot-col { padding-top: 3px; }
-
-/* Pallino colorato nella timeline */
-.tl-dot {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  border: 3px solid var(--bg); // "sfondo" del pallino per far risaltare il colore
-  flex-shrink: 0;
-}
-
-.tl-body  { flex: 1; padding-bottom: 20px; min-width: 0; }
-.tl-time  { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
-.tl-title { font-size: 14px; font-weight: 600; margin-bottom: 2px; }
-.tl-sub   { font-size: 12px; color: var(--muted); }
-
-/* Riga posizione GPS */
-.tl-loc {
-  font-size: 11px;
-  color: var(--muted);
-  margin-top: 5px;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-
-  svg { width: 10px; height: 10px; stroke: currentColor; fill: none; stroke-width: 2; }
-}
-
-/* Griglia foto nella timeline */
-.tl-photos { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 8px; }
-
-.tl-photo {
-  width: 72px;
-  height: 72px;
-  border-radius: 8px;
-  object-fit: cover;
-  cursor: pointer;
-  border: 2px solid var(--border2);
-  transition: transform .12s, border-color .12s;
-
-  &:hover { transform: scale(1.06); border-color: var(--live); }
-}
-
-/* ──────────────────────────────────────────────────────────────────
-   Scontrini pasto
-   ────────────────────────────────────────────────────────────────── */
-.receipt-row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 10px 0;
-  border-bottom: 1px solid var(--border);
-
-  &:last-child { border-bottom: none; }
-}
-
-.receipt-row-time {
-  font-family: 'Barlow Condensed', sans-serif;
-  font-size: 18px;
-  font-weight: 700;
-  color: var(--muted);
-  min-width: 52px;
-}
-
-.receipt-row-photos {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.receipt-thumb {
-  width: 80px;
-  height: 80px;
-  object-fit: cover;
-  border-radius: var(--r-xs);
-  border: 2px solid var(--yellow);
-  cursor: pointer;
-  transition: transform .12s;
-
-  &:hover { transform: scale(1.06); }
-}
-
-/* ──────────────────────────────────────────────────────────────────
-   Foto cantiere (sezione desktop)
-   ────────────────────────────────────────────────────────────────── */
-.site-photos-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-
-.site-photo-thumb {
-  width: 120px;
-  height: 120px;
-  object-fit: cover;
-  border-radius: var(--r-xs);
-  border: 2px solid var(--border2);
-  cursor: pointer;
-  transition: transform .12s, border-color .12s;
-
-  &:hover { transform: scale(1.04); border-color: var(--live); }
-}
-
-/* Badge "+N" quando ci sono più di 8 foto */
-.tl-more-photos {
-  width: 72px;
-  height: 72px;
-  border-radius: 8px;
-  background: var(--surface-2);
-  border: 2px solid var(--border2);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--muted);
-}
-
 // ════════════════════════════════════════════════════════════════════
-// MOBILE LAVORI VIEW
+// MOBILE
 // ════════════════════════════════════════════════════════════════════
 
 .lavori-view {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
-  padding-bottom: 24px;
+  min-height: 100vh;
+  background: var(--bg);
+  padding-bottom: calc(var(--nav-h) + 16px);
 }
 
 .lavori-header {
@@ -957,11 +667,10 @@ function fmtTimeMob(ts: number): string {
   align-items: center;
   justify-content: space-between;
   padding: 20px 20px 12px;
-  padding-top: calc(20px + var(--safe-t));
 }
 
 .lavori-title {
-  font-size: 26px;
+  font-size: 22px;
   font-weight: 700;
   color: var(--ink);
 }
@@ -969,18 +678,19 @@ function fmtTimeMob(ts: number): string {
 .lavori-filter-btn {
   width: 36px;
   height: 36px;
+  border: none;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
   cursor: pointer;
+  color: var(--muted);
 
   svg {
-    width: 16px;
-    height: 16px;
-    stroke: var(--muted);
+    width: 15px;
+    height: 15px;
+    stroke: currentColor;
     fill: none;
     stroke-width: 1.8;
     stroke-linecap: round;
@@ -988,11 +698,10 @@ function fmtTimeMob(ts: number): string {
   }
 }
 
-// ── Filter tabs ───────────────────────────────────────────────────────
 .lavori-tabs {
   display: flex;
   gap: 6px;
-  padding: 0 20px 16px;
+  padding: 0 16px 12px;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
@@ -1000,26 +709,25 @@ function fmtTimeMob(ts: number): string {
 }
 
 .lavori-tab {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 5px;
   padding: 6px 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
   border-radius: 20px;
+  border: 1px solid var(--border);
+  background: transparent;
   font-family: var(--ff);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
   color: var(--muted);
   cursor: pointer;
   white-space: nowrap;
-  flex-shrink: 0;
   transition: all .12s;
 
   &.active {
-    background: var(--ink);
-    border-color: var(--ink);
-    color: var(--bg);
+    background: var(--surface-3);
+    border-color: var(--border-strong);
+    color: var(--ink);
     font-weight: 600;
   }
 }
@@ -1029,54 +737,59 @@ function fmtTimeMob(ts: number): string {
   height: 6px;
   border-radius: 50%;
   background: var(--live);
-  display: inline-block;
+  animation: blink 1s infinite;
 }
 
-// ── Empty state ──────────────────────────────────────────────────────
 .lavori-empty {
-  text-align: center;
-  padding: 60px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 60px 24px;
+  gap: 8px;
   color: var(--muted);
 
   svg {
-    width: 44px;
-    height: 44px;
+    width: 36px;
+    height: 36px;
     stroke: var(--muted);
     fill: none;
-    stroke-width: 1.4;
-    display: block;
-    margin: 0 auto 14px;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: .5;
   }
 }
 
-.lavori-empty-title { font-size: 15px; font-weight: 600; margin-bottom: 4px; }
-.lavori-empty-sub   { font-size: 13px; }
+.lavori-empty-title { font-size: 15px; font-weight: 600; color: var(--ink-2); }
+.lavori-empty-sub   { font-size: 13px; color: var(--muted); }
 
-// ── Day groups ───────────────────────────────────────────────────────
-.lavori-group {
+.lavori-group { padding: 0 16px 12px; }
+
+.lavori-group-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .6px;
+  text-transform: uppercase;
+  color: var(--ink);
+  padding: 12px 4px 8px;
+}
+
+.lavori-group-label--past {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.lavori-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
   margin-bottom: 8px;
 }
 
-.lavori-group-label {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-  color: var(--muted);
-  padding: 0 20px 8px;
-}
-
-// ── Activity card ────────────────────────────────────────────────────
-.lavori-card {
-  background: var(--surface);
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  padding: 14px 20px;
-  margin-bottom: 2px;
-  cursor: pointer;
-  transition: background .12s;
-
-  &:active { background: var(--surface-2); }
+.lavori-card--live {
+  border-color: var(--ok);
+  transition: border-color .15s;
 }
 
 .lavori-card-top {
@@ -1088,19 +801,35 @@ function fmtTimeMob(ts: number): string {
 
 .lavori-card-badges {
   display: flex;
-  gap: 5px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 .lavori-card-time {
-  font-family: var(--ff-mono);
   font-size: 11px;
   color: var(--muted);
-  flex-shrink: 0;
+  font-family: var(--ff-mono);
 }
 
+.lavori-card-time--live {
+  color: var(--ok-ink);
+  font-weight: 700;
+}
+
+.badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .4px;
+}
+
+.badge-live { background: var(--live-soft);   color: var(--live); }
+.badge-ok   { background: var(--ok-soft);     color: var(--ok-ink); }
+.badge-muted{ background: var(--surface-3);   color: var(--muted); }
+
 .lavori-card-name {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--ink);
   margin-bottom: 6px;
@@ -1111,35 +840,636 @@ function fmtTimeMob(ts: number): string {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--muted);
 }
 
-.lavori-card-loc,
-.lavori-card-dur,
-.lavori-card-photos {
+.lavori-card-loc {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
 
   svg {
-    width: 12px;
-    height: 12px;
+    width: 11px;
+    height: 11px;
     stroke: currentColor;
     fill: none;
-    stroke-width: 2;
+    stroke-width: 1.8;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
 }
 
+.lavori-card-photos {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+
+  svg {
+    width: 11px;
+    height: 11px;
+    stroke: currentColor;
+    fill: none;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+}
+
+.lavori-card-dur { font-family: var(--ff-mono); }
+
 .lavori-card-note {
   font-size: 12px;
-  color: var(--muted-2);
+  color: var(--muted);
   margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
   font-style: italic;
-  white-space: nowrap;
+}
+
+// ════════════════════════════════════════════════════════════════════
+// DESKTOP: Lavorazioni table
+// ════════════════════════════════════════════════════════════════════
+
+.lav-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
+  background: var(--bg);
+  padding: 0 !important;
+}
+
+// ── Topbar ────────────────────────────────────────────────────────────
+.lav-top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 20px 28px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.lav-top-left { flex-shrink: 0; }
+.lav-top-center { flex: 1; }
+.lav-top-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.lav-breadcrumb {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .8px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.lav-title-row { display: flex; align-items: baseline; gap: 12px; }
+
+.lav-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0;
+}
+
+.lav-subtitle { font-size: 13px; color: var(--muted); }
+.lav-sub-live { color: var(--live); font-weight: 600; }
+.lav-sub-err  { color: var(--err);  font-weight: 600; }
+
+.lav-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+  height: 36px;
+
+  svg {
+    width: 14px;
+    height: 14px;
+    stroke: var(--muted);
+    fill: none;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex-shrink: 0;
+  }
+
+  input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    font-family: var(--ff);
+    font-size: 13px;
+    color: var(--ink);
+    outline: none;
+
+    &::placeholder { color: var(--muted); }
+  }
+
+  kbd {
+    font-size: 10px;
+    color: var(--muted);
+    font-family: var(--ff);
+    background: var(--surface-2);
+    border-radius: 3px;
+    padding: 1px 5px;
+  }
+}
+
+.lav-btn-ghost {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: var(--radius-sm);
+  font-family: var(--ff);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: all .12s;
+
+  &:hover { background: var(--surface-2); }
+
+  svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; }
+}
+
+.lav-btn-fill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 16px;
+  background: var(--ink);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--ff);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--bg);
+  cursor: pointer;
+  transition: opacity .12s;
+
+  &:hover { opacity: .88; }
+
+  svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2.5; stroke-linecap: round; }
+}
+
+.lav-bell {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--muted);
+  transition: all .12s;
+
+  &:hover { color: var(--ink); background: var(--surface-2); }
+
+  svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+}
+
+// ── Filter bar ────────────────────────────────────────────────────────
+.lav-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.lav-tabs {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.lav-tab {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  font-family: var(--ff);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all .12s;
+  margin-bottom: -1px;
+
+  &:hover { color: var(--ink); }
+
+  &.active {
+    color: var(--ink);
+    font-weight: 600;
+    border-bottom-color: var(--primary);
+  }
+
+  &.lav-tab-live.active { border-bottom-color: var(--live); color: var(--live); }
+  &.lav-tab-err.active  { border-bottom-color: var(--err);  color: var(--err); }
+}
+
+.lav-tab-cnt {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  background: var(--surface-2);
+  border-radius: 9px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.lav-tab-cnt-live {
+  background: var(--live-soft);
+  color: var(--live);
+}
+
+.lav-filter-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lav-filter-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: var(--radius-xs);
+  font-family: var(--ff);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  transition: all .12s;
+
+  &:hover { color: var(--ink); background: var(--surface-2); }
+
+  svg { width: 11px; height: 11px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+}
+
+// ── Table ─────────────────────────────────────────────────────────────
+.lav-table-wrap {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+.lav-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 80px 24px;
+  gap: 8px;
+
+  svg {
+    width: 40px;
+    height: 40px;
+    stroke: var(--muted);
+    fill: none;
+    stroke-width: 1.5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    opacity: .4;
+    margin-bottom: 8px;
+  }
+}
+
+.lav-empty-title { font-size: 16px; font-weight: 600; color: var(--ink-2); }
+.lav-empty-sub   { font-size: 13px; color: var(--muted); }
+.lav-empty-cta {
+  margin-top: 12px;
+  padding: 8px 20px;
+  background: var(--primary);
+  border: none;
+  border-radius: var(--radius-sm);
+  font-family: var(--ff);
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  cursor: pointer;
+  transition: opacity .12s;
+
+  &:hover { opacity: .88; }
+}
+
+.lav-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+
+  thead tr {
+    border-bottom: 1px solid var(--border);
+  }
+
+  th {
+    padding: 10px 14px;
+    text-align: left;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .8px;
+    text-transform: uppercase;
+    color: var(--muted);
+    white-space: nowrap;
+    background: var(--bg);
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+
+  td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+  }
+}
+
+.lav-row {
+  cursor: pointer;
+  transition: background .1s;
+
+  &:hover {
+    background: var(--surface);
+
+    .lav-menu-btn { opacity: 1; }
+  }
+}
+
+// Column widths
+.col-id   { width: 100px; }
+.col-lav  { min-width: 160px; max-width: 240px; overflow: hidden; }
+.col-cli  { width: 110px; overflow: hidden; }
+.col-loc  { width: 110px; }
+.col-scad { width: 90px; }
+.col-stato{ width: 120px; }
+.col-pri  { width: 100px; }
+.col-sq   { width: 100px; }
+.col-av   { width: 170px; }
+.col-act  { width: 48px; }
+
+.lav-id {
+  font-family: var(--ff-mono);
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.lav-detail {
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1.3;
+}
+
+.lav-type-tag {
+  font-size: 11px;
+  margin-top: 2px;
+  color: var(--muted);
+}
+
+.lav-cell-text  { color: var(--ink-2); }
+.lav-cell-muted { color: var(--muted); font-style: italic; }
+
+.lav-loc {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--ink-2);
+
+  svg { width: 12px; height: 12px; stroke: var(--muted); fill: none; stroke-width: 1.8; stroke-linecap: round; flex-shrink: 0; }
+}
+
+.lav-scad {
+  font-size: 12px;
+  color: var(--ink-2);
+  font-weight: 500;
+
+  &.lav-scad-overdue { color: var(--err); font-weight: 600; }
+  &.lav-scad-today   { color: var(--live); font-weight: 600; }
+}
+
+// ── Stato badge ───────────────────────────────────────────────────────
+.lav-stato-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid transparent;
+
+  &.stato-in-corso      { background: var(--live-soft);    color: var(--live);       border-color: color-mix(in srgb, var(--live) 30%, transparent); }
+  &.stato-in-viaggio    { background: rgba(45,91,255,.1);  color: var(--primary-ink); border-color: rgba(45,91,255,.3); }
+  &.stato-assegnato     { background: rgba(45,91,255,.1);  color: var(--primary-ink); border-color: rgba(45,91,255,.3); }
+  &.stato-pianificato   { background: transparent;         color: var(--muted);       border-color: var(--border-strong); }
+  &.stato-da-verificare { background: rgba(245,165,36,.1); color: var(--live);        border-color: rgba(245,165,36,.3); }
+  &.stato-bloccato      { background: var(--err-soft);     color: var(--err);         border-color: rgba(220,38,38,.3); }
+  &.stato-completato    { background: var(--ok-soft);      color: var(--ok-ink);      border-color: rgba(31,157,85,.3); }
+}
+
+// ── Priorità ──────────────────────────────────────────────────────────
+.lav-pri {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.lav-pri-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+// ── Squadra avatars ───────────────────────────────────────────────────
+.lav-avatars {
+  display: flex;
+  align-items: center;
+}
+
+.lav-avatar {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid var(--bg);
+  margin-left: -6px;
+  flex-shrink: 0;
+
+  &:first-child { margin-left: 0; }
+}
+
+.lav-avatar-more {
+  background: var(--surface-3);
+  color: var(--muted);
+  font-size: 9px;
+}
+
+// ── Avanzamento ───────────────────────────────────────────────────────
+.lav-av {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.lav-progress-bar {
+  width: 100%;
+  height: 5px;
+  background: var(--surface-3);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.lav-progress-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--primary);
+  transition: width .3s;
+
+  &.lav-progress-fill-ok   { background: var(--ok); }
+  &.lav-progress-fill-warn { background: var(--warn); }
+  &.lav-progress-fill-err  { background: var(--err); }
+}
+
+.lav-av-counts {
+  font-size: 11px;
+  font-family: var(--ff-mono);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.lav-av-remain {
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--ff-mono);
+  white-space: nowrap;
+
+  &.lav-av-remain--ok   { color: var(--ok-ink); }
+  &.lav-av-remain--over { color: var(--err-ink); }
+}
+
+.lav-av-label {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.lav-av-unplanned {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--warn-ink);
+}
+
+// ── Row menu ──────────────────────────────────────────────────────────
+.lav-menu-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  border-radius: var(--radius-xs);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--muted);
+  opacity: 0;
+  transition: all .1s;
+
+  &:hover { color: var(--ink); background: var(--surface-2); }
+
+  svg { width: 14px; height: 14px; fill: currentColor; stroke: none; }
+}
+
+.lav-row-menu {
+  position: absolute;
+  right: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 8px 24px rgba(0,0,0,.3);
+  z-index: 100;
+  overflow: hidden;
+  min-width: 140px;
+
+  button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 9px 14px;
+    border: none;
+    background: transparent;
+    font-family: var(--ff);
+    font-size: 13px;
+    color: var(--ink-2);
+    cursor: pointer;
+    text-align: left;
+    transition: background .1s;
+
+    &:hover { background: var(--surface-2); }
+
+    &:last-child { color: var(--err); }
+
+    svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  }
+}
+
+.col-act { position: relative; }
+
+@media (min-width: 800px) {
+  .lav-breadcrumb    { font-size: 13px; }
+  .lav-title         { font-size: 24px; }
+  .lav-subtitle      { font-size: 15px; }
+  .lav-search input  { font-size: 15px; }
+  .lav-btn-ghost     { font-size: 15px; }
+  .lav-btn-fill      { font-size: 15px; }
+  .lav-tab           { font-size: 15px; }
+  .lav-filter-btn    { font-size: 13px; }
+  .lav-table         { font-size: 15px; }
+  .lav-empty-title   { font-size: 18px; }
+  .lav-empty-sub     { font-size: 15px; }
+  .lav-empty-cta     { font-size: 15px; }
+  .lav-id            { font-size: 13px; }
+  .lav-type-tag      { font-size: 13px; }
+  .lav-scad          { font-size: 14px; }
+  .lav-stato-badge   { font-size: 13px; }
+  .lav-pri           { font-size: 14px; }
+  .lav-av-counts     { font-size: 13px; }
+  .lav-av-remain     { font-size: 13px; }
+  .lav-row-menu button { font-size: 15px; }
 }
 </style>

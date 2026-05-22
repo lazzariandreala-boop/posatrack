@@ -54,7 +54,7 @@ import { computed } from 'vue'
         Dashboard
       </button>
 
-      <button class="sb-nav-item" :class="{ active: currentView === 'summary' }" @click="navigate('summary')">
+      <button class="sb-nav-item" :class="{ active: currentView === 'summary' || currentView === 'lavorazione-detail' }" @click="navigate('summary')">
         <svg viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
         Lavorazioni
         <span v-if="store.syncStatus.value === 'ok'" class="sb-badge sb-badge-live">live</span>
@@ -404,5 +404,15 @@ import { computed } from 'vue'
     stroke: currentColor; fill: none;
     stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
   }
+}
+
+@media (min-width: 800px) {
+  .sb-brand-name  { font-size: 17px; }
+  .sb-cta-btn     { font-size: 15px; }
+  .sb-nav-item    { font-size: 15px; }
+  .sb-sync-text   { font-size: 13px; }
+  .sb-user-name   { font-size: 14px; }
+  .sb-user-ws     { font-size: 12px; }
+  .sb-section-label { font-size: 10px; }
 }
 </style>
