@@ -1,0 +1,28 @@
+# Dependencies
+node_modules/
+
+# Nuxt build output
+.nuxt/
+.output/
+.nitro/
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+*.Zone.Identifier
+
+# Editor
+.idea/
+.vscode/
+
+# Test coverage
+coverage/
+dist/
