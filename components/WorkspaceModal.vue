@@ -19,9 +19,14 @@ import { useAuth }      from '~/composables/useAuth'
 import { useStore }     from '~/composables/useStore'
 import {
   fetchWorkspace,
-  createWorkspace  as firestoreCreateWorkspace,
-  inviteMember     as firestoreInviteMember,
-  removeMember     as firestoreRemoveMember,
+  createWorkspace    as firestoreCreateWorkspace,
+  deleteWorkspace    as firestoreDeleteWorkspace,
+  inviteMember       as firestoreInviteMember,
+  removeMember       as firestoreRemoveMember,
+  fetchUserWorkspaces,
+  joinWorkspace      as firestoreJoinWorkspace,
+  joinWorkspaceByCode as firestoreJoinByCode,
+  type WorkspaceListItem,
 } from '~/services/firestore'
 import type { Workspace } from '~/types'
 
@@ -33,15 +38,28 @@ const auth     = useAuth()
 const store    = useStore()
 
 // ── Stato ────────────────────────────────────────────────────────────
-const isLoading  = ref(false)
-const feedback   = ref<{ ok: boolean; msg: string } | null>(null)
-const workspace  = ref<Workspace | null>(null)
+const isLoading          = ref(false)
+const feedback           = ref<{ ok: boolean; msg: string } | null>(null)
+const workspace          = ref<Workspace | null>(null)
+
+// Lista workspace disponibili (caricata al mount quando non c'è workspace attivo)
+const availableWorkspaces  = ref<WorkspaceListItem[]>([])
+// Inizia true se non c'è workspace attivo: evita il flash del form "Crea"
+// prima che onMounted esegua fetchUserWorkspaces
+const loadingWorkspaces    = ref(!appState.activeWorkspaceId.value)
+const showCreateForm       = ref(false)
+// Workspace in attesa di conferma eliminazione (null = nessuno)
+const pendingDeleteItem    = ref<WorkspaceListItem | null>(null)
 
 // Form "crea workspace"
 const newWsName  = ref('')
 
 // Form "invita membro"
 const inviteEmail = ref('')
+
+// Flusso codice invito manuale (fallback quando la query pendingInvites fallisce)
+const showInviteCode = ref(false)
+const inviteCode     = ref('')
 
 // ── Computed ─────────────────────────────────────────────────────────
 const isOwner = computed(() =>
@@ -54,13 +72,41 @@ const isVisible = computed(() =>
 
 // ── Init ─────────────────────────────────────────────────────────────
 onMounted(async () => {
-  await loadWorkspace()
+  const wid = appState.activeWorkspaceId.value
+  if (wid) {
+    await loadWorkspace()
+  } else {
+    await loadAvailableWorkspaces()
+  }
 })
 
 async function loadWorkspace(): Promise<void> {
   const wid = appState.activeWorkspaceId.value
   if (!wid) { workspace.value = null; return }
   workspace.value = await fetchWorkspace(wid)
+}
+
+async function loadAvailableWorkspaces(): Promise<void> {
+  const user = auth.currentUser.value
+  if (!user) return
+  loadingWorkspaces.value = true
+  try {
+    availableWorkspaces.value = await fetchUserWorkspaces(user.uid, user.email ?? '')
+    // Mostra il form "Crea" solo se Firestore ha risposto con lista vuota
+    if (availableWorkspaces.value.length === 0) showCreateForm.value = true
+  } catch (e) {
+    // Errore inaspettato: mostra un feedback ma NON va direttamente a "Crea"
+    // per evitare che un errore di rete nasconda workspace esistenti
+    console.error('[WorkspaceModal] loadAvailableWorkspaces error:', e)
+    feedback.value = { ok: false, msg: 'Impossibile caricare i workspace. Riprova.' }
+  } finally {
+    loadingWorkspaces.value = false
+  }
+}
+
+/** Disconnette l'utente e ritorna alla schermata di login. */
+async function handleLogout(): Promise<void> {
+  await auth.logout()
 }
 
 // ── Azioni ───────────────────────────────────────────────────────────
@@ -90,6 +136,74 @@ async function createWorkspace(): Promise<void> {
     emit('workspace-ready', wid)
   } catch (e) {
     feedback.value = { ok: false, msg: e instanceof Error ? e.message : 'Errore.' }
+  } finally {
+    isLoading.value = false
+  }
+}
+
+/** Entra in un workspace esistente (membro già presente o invito pendente). */
+async function enterWorkspace(item: WorkspaceListItem): Promise<void> {
+  const user = auth.currentUser.value
+  if (!user) return
+  feedback.value  = null
+  isLoading.value = true
+  try {
+    if (item.isPending) {
+      await firestoreJoinWorkspace(item.id, user.uid, user.email ?? '')
+    }
+    appState.setActiveWorkspace(item.id, item.name)
+    await store.initWorkspace(item.id)
+    await loadWorkspace()
+    emit('workspace-ready', item.id)
+  } catch (e) {
+    feedback.value = { ok: false, msg: e instanceof Error ? e.message : 'Errore.' }
+  } finally {
+    isLoading.value = false
+  }
+}
+
+/**
+ * Entra in un workspace inserendo manualmente l'ID (codice invito).
+ * Fallback per quando la query automatica su pendingInvites è bloccata
+ * dalle regole Firestore non ancora deployate.
+ */
+async function joinByCode(): Promise<void> {
+  const user = auth.currentUser.value
+  const wid  = inviteCode.value.trim()
+  if (!user || !wid) return
+  feedback.value  = null
+  isLoading.value = true
+  try {
+    const result = await firestoreJoinByCode(wid, user.uid, user.email ?? '')
+    if (result.success) {
+      const name = result.name ?? wid
+      appState.setActiveWorkspace(wid, name)
+      await store.initWorkspace(wid)
+      emit('workspace-ready', wid)
+    } else {
+      feedback.value = { ok: false, msg: 'Nessun invito trovato per la tua email in questo workspace. Verifica l\'ID e chiedi al proprietario di reinvitarti.' }
+    }
+  } catch (e) {
+    feedback.value = { ok: false, msg: e instanceof Error ? e.message : 'Errore.' }
+  } finally {
+    isLoading.value = false
+  }
+}
+
+/** Elimina un workspace (solo il proprietario). */
+async function executeDeleteWorkspace(): Promise<void> {
+  const item = pendingDeleteItem.value
+  if (!item) return
+  pendingDeleteItem.value = null
+  isLoading.value = true
+  feedback.value  = null
+  try {
+    await firestoreDeleteWorkspace(item.id)
+    // Ricarica la lista aggiornata
+    await loadAvailableWorkspaces()
+    feedback.value = { ok: true, msg: `Workspace "${item.name}" eliminato.` }
+  } catch (e) {
+    feedback.value = { ok: false, msg: e instanceof Error ? e.message : 'Errore durante l\'eliminazione.' }
   } finally {
     isLoading.value = false
   }
@@ -170,7 +284,12 @@ function close(): void {
             </svg>
             Workspace
           </div>
-          <button v-if="!forceOpen" class="ws-close-btn" @click="close">
+          <!-- Close (modal secondario) o Logout (gate obbligatorio) -->
+          <button v-if="forceOpen" class="ws-logout-btn" @click="handleLogout" title="Esci dall'account">
+            <svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            Esci
+          </button>
+          <button v-else class="ws-close-btn" @click="close">
             <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
           </button>
         </div>
@@ -262,35 +381,143 @@ function close(): void {
             </button>
           </div>
 
-          <!-- Nessun workspace – Crea nuovo ──────────────────────── -->
+          <!-- Nessun workspace attivo ─────────────────────────────── -->
           <div v-else class="ws-section">
-            <div class="ws-section-title">
-              {{ forceOpen ? 'Benvenuto in PosaTrack' : 'Crea un workspace' }}
-            </div>
-            <p class="ws-intro">
-              Un <strong>workspace</strong> è lo spazio condiviso dove vengono
-              salvati tutti i dati del cantiere. Puoi invitare altri utenti
-              che potranno accedervi con il loro account Google o email.
-            </p>
 
-            <label class="ws-label">Nome workspace (es. "Pozza Impianti")</label>
-            <input
-              v-model="newWsName"
-              type="text"
-              class="ws-input"
-              placeholder="Nome azienda o cantiere"
-              :disabled="isLoading"
-              @keyup.enter="createWorkspace"
-            />
-            <button
-              class="ws-btn ws-btn-primary"
-              style="margin-top: 10px"
-              :disabled="isLoading || !newWsName.trim()"
-              @click="createWorkspace"
-            >
-              <span v-if="isLoading" class="ws-spinner ws-spinner-sm" />
-              Crea workspace
-            </button>
+            <!-- Caricamento lista ──────────────────────────────────── -->
+            <div v-if="loadingWorkspaces" class="ws-loading">
+              <span class="ws-spinner" /> Ricerca workspace…
+            </div>
+
+            <template v-else>
+
+              <!-- Selezione workspace disponibili ──────────────────── -->
+              <template v-if="availableWorkspaces.length > 0 && !showCreateForm">
+                <div class="ws-section-title">I tuoi workspace</div>
+
+                <!-- Dialog conferma eliminazione -->
+                <div v-if="pendingDeleteItem" class="ws-delete-confirm">
+                  <div class="ws-delete-confirm-text">
+                    Eliminare <strong>{{ pendingDeleteItem.name }}</strong>?
+                    Tutti i dati associati verranno eliminati permanentemente.
+                  </div>
+                  <div class="ws-delete-confirm-actions">
+                    <button class="ws-btn" @click="pendingDeleteItem = null">Annulla</button>
+                    <button class="ws-btn ws-btn-danger" :disabled="isLoading" @click="executeDeleteWorkspace">
+                      <span v-if="isLoading" class="ws-spinner ws-spinner-sm" />
+                      Elimina
+                    </button>
+                  </div>
+                </div>
+
+                <div class="ws-avail-list">
+                  <div
+                    v-for="item in availableWorkspaces"
+                    :key="item.id"
+                    class="ws-avail-item"
+                    :class="{ 'ws-avail-item--deleting': pendingDeleteItem?.id === item.id }"
+                  >
+                    <div class="ws-avail-info">
+                      <div class="ws-avail-name">🏗 {{ item.name }}</div>
+                      <div class="ws-avail-meta">
+                        {{ item.memberCount }} {{ item.memberCount === 1 ? 'membro' : 'membri' }}
+                        · {{ item.ownerEmail }}
+                        <span v-if="item.isPending" class="ws-invite-tag">invito</span>
+                      </div>
+                    </div>
+                    <div class="ws-avail-actions">
+                      <button
+                        class="ws-btn ws-btn-primary ws-btn-sm"
+                        :disabled="isLoading"
+                        @click="enterWorkspace(item)"
+                      >
+                        {{ item.isPending ? 'Accetta invito' : 'Entra' }}
+                      </button>
+                      <!-- Elimina: solo il proprietario può vederlo -->
+                      <button
+                        v-if="!item.isPending && item.ownerId === auth.currentUser.value?.uid"
+                        class="ws-delete-btn"
+                        :disabled="isLoading"
+                        title="Elimina workspace"
+                        @click="pendingDeleteItem = item"
+                      >
+                        <svg viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6M10 11v6M14 11v6"/></svg>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="ws-divider"><span>oppure</span></div>
+                <button class="ws-new-link" @click="showCreateForm = true">
+                  + Crea un nuovo workspace
+                </button>
+
+                <!-- Fallback codice invito manuale -->
+                <button class="ws-new-link" style="color: var(--muted)" @click="showInviteCode = !showInviteCode">
+                  {{ showInviteCode ? '− Nascondi' : '+ Ho un codice invito' }}
+                </button>
+                <div v-if="showInviteCode" class="ws-code-form">
+                  <label class="ws-label">ID Workspace (chiederlo al proprietario)</label>
+                  <div class="ws-invite-row">
+                    <input
+                      v-model="inviteCode"
+                      type="text"
+                      class="ws-input"
+                      placeholder="Incolla l'ID workspace..."
+                      :disabled="isLoading"
+                      @keyup.enter="joinByCode"
+                    />
+                    <button
+                      class="ws-btn ws-btn-primary ws-btn-sm"
+                      :disabled="isLoading || !inviteCode.trim()"
+                      @click="joinByCode"
+                    >
+                      <span v-if="isLoading" class="ws-spinner ws-spinner-sm" />
+                      Entra
+                    </button>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Form crea workspace ───────────────────────────────── -->
+              <template v-else>
+                <div class="ws-section-title">
+                  {{ availableWorkspaces.length === 0 ? 'Nessun workspace trovato' : 'Nuovo workspace' }}
+                </div>
+
+                <p class="ws-intro">
+                  Un <strong>workspace</strong> è lo spazio condiviso dove vengono
+                  salvati tutti i dati del cantiere. Puoi invitare altri utenti
+                  che potranno accedervi con il loro account Google o email.
+                </p>
+
+                <button
+                  v-if="availableWorkspaces.length > 0"
+                  class="ws-back-link"
+                  @click="showCreateForm = false"
+                >← Torna alla selezione</button>
+
+                <label class="ws-label">Nome workspace (es. "Pozza Impianti")</label>
+                <input
+                  v-model="newWsName"
+                  type="text"
+                  class="ws-input"
+                  placeholder="Nome azienda o cantiere"
+                  :disabled="isLoading"
+                  @keyup.enter="createWorkspace"
+                />
+                <button
+                  class="ws-btn ws-btn-primary"
+                  style="margin-top: 10px"
+                  :disabled="isLoading || !newWsName.trim()"
+                  @click="createWorkspace"
+                >
+                  <span v-if="isLoading" class="ws-spinner ws-spinner-sm" />
+                  Crea workspace
+                </button>
+              </template>
+
+            </template>
           </div>
 
         </div>
@@ -367,6 +594,45 @@ function close(): void {
     width: 16px; height: 16px;
     stroke: currentColor; fill: none;
     stroke-width: 2; stroke-linecap: round;
+  }
+}
+
+.ws-logout-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: 1px solid var(--border2);
+  background: transparent;
+  border-radius: var(--r-sm);
+  color: var(--muted);
+  font-size: 13px;
+  font-family: 'DM Sans', sans-serif;
+  cursor: pointer;
+  transition: background .12s, color .12s;
+
+  &:hover { background: var(--surface2); color: var(--text); }
+
+  svg {
+    width: 15px; height: 15px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  }
+}
+
+.ws-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 4px 0;
+  color: var(--dim);
+  font-size: 11px;
+
+  &::before, &::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
   }
 }
 
@@ -601,5 +867,157 @@ function close(): void {
   width: 12px; height: 12px;
   border-color: rgba(255,255,255,.3);
   border-top-color: #fff;
+}
+
+// ── Available workspaces list ────────────────────────────────────────
+.ws-avail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ws-avail-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: var(--r-sm);
+  transition: border-color .15s;
+
+  &--deleting { border-color: var(--red); }
+}
+
+.ws-avail-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ws-avail-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.ws-avail-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ws-avail-meta {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.ws-invite-tag {
+  display: inline-block;
+  background: rgba(255,95,0,.15);
+  color: var(--orange);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 4px;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+
+.ws-btn-sm {
+  padding: 7px 14px;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.ws-delete-btn {
+  width: 30px; height: 30px;
+  border: 1px solid var(--border2);
+  background: transparent;
+  border-radius: var(--r-xs);
+  color: var(--muted);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .12s, color .12s, border-color .12s;
+  flex-shrink: 0;
+
+  &:hover:not(:disabled) {
+    background: rgba(239,68,68,.12);
+    color: var(--red);
+    border-color: rgba(239,68,68,.4);
+  }
+
+  &:disabled { opacity: .4; cursor: default; }
+
+  svg {
+    width: 14px; height: 14px;
+    stroke: currentColor; fill: none;
+    stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round;
+  }
+}
+
+.ws-delete-confirm {
+  background: rgba(239,68,68,.08);
+  border: 1px solid rgba(239,68,68,.3);
+  border-radius: var(--r-sm);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ws-delete-confirm-text {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+
+  strong { color: var(--red); }
+}
+
+.ws-delete-confirm-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.ws-new-link {
+  background: none;
+  border: none;
+  color: var(--orange);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 4px 0;
+  font-family: 'DM Sans', sans-serif;
+  text-align: left;
+
+  &:hover { text-decoration: underline; }
+}
+
+.ws-back-link {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 0 0 4px;
+  font-family: 'DM Sans', sans-serif;
+  text-align: left;
+
+  &:hover { color: var(--text); }
+}
+
+.ws-code-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  border-radius: var(--r-sm);
+  padding: 12px 14px;
 }
 </style>

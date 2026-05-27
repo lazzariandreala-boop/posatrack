@@ -127,12 +127,6 @@ export async function loginWithGoogle(): Promise<User> {
   return cred.user
 }
 
-/**
- * Login con Microsoft.
- * Richiede Azure App Registration con:
- *   - Redirect URI: https://<your-domain>/__/auth/handler
- *   - Supporto account Microsoft personali + aziendali
- */
 export async function loginWithMicrosoft(): Promise<User> {
   const provider = new OAuthProvider('microsoft.com')
   provider.setCustomParameters({ prompt: 'select_account' })

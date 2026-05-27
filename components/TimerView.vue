@@ -14,7 +14,7 @@
  *   useTimer     → cronometro live
  *   usePhoto     → compressione foto inline nel log
  */
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useAppState } from '~/composables/useAppState'
 import { useStore } from '~/composables/useStore'
 import { useGeo } from '~/composables/useGeo'
@@ -431,13 +431,25 @@ onMounted(() => {
     timer.start(ongoing.startTime)
   }
 
-  // Pre-crea attività pianificate per oggi da work orders
-  const created = store.autoCreatePlannedActivities(todayStr())
-  if (created > 0) {
-    appState.showToast(`📋 ${created} lavorazion${created === 1 ? 'e pianificata' : 'i pianificate'} per oggi`)
-  }
   initCostInputs()
 })
+
+// Quando Firestore completa il primo caricamento, crea le attività pianificate.
+// Serve perché onMounted può scattare prima che onSnapshot abbia restituito i dati.
+let _plannedCreated = false
+watch(
+  () => store.syncStatus.value,
+  (status) => {
+    if (status === 'ok' && !_plannedCreated) {
+      _plannedCreated = true
+      const created = store.autoCreatePlannedActivities(todayStr())
+      if (created > 0) {
+        appState.showToast(`📋 ${created} lavorazion${created === 1 ? 'e pianificata' : 'i pianificate'} per oggi`)
+      }
+    }
+  },
+  { immediate: true },
+)
 
 onUnmounted(() => {
   if (clockInterval !== null) clearInterval(clockInterval)

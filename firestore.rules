@@ -3,56 +3,19 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ── Documento utente ──────────────────────────────────────────────
+    // Documento utente
     match /users/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
 
-    // ── Workspace ─────────────────────────────────────────────────────
+    // Workspace — chiunque sia autenticato può leggere e scrivere
     match /workspaces/{workspaceId} {
+      allow read, write: if request.auth != null;
 
-      function isAuth() {
-        return request.auth != null;
-      }
-
-      function isMember() {
-        return isAuth() && request.auth.uid in resource.data.members;
-      }
-
-      function isOwner() {
-        return isAuth() && request.auth.uid == resource.data.ownerId;
-      }
-
-      function isIncomingMember() {
-        return isAuth() &&
-               request.auth.token.email in resource.data.pendingInvites;
-      }
-
-      // Lettura workspace: solo i membri
-      allow read: if isMember();
-
-      // Creazione workspace: qualsiasi utente autenticato che si include come membro
-      allow create: if isAuth() &&
-                       request.auth.uid in request.resource.data.members;
-
-      // Aggiornamento: il proprietario o un utente che accetta un invito
-      allow update: if isOwner() || isIncomingMember();
-
-      // Eliminazione: solo il proprietario
-      allow delete: if isOwner();
-
-      // ── Store dati del workspace ──────────────────────────────────────
-      // IMPORTANTE: qui "resource" punta al documento store, NON al workspace.
-      // Bisogna recuperare esplicitamente il workspace con get() per leggere members.
       match /store/{document} {
-        function workspaceMembers() {
-          return get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.members;
-        }
-
-        allow read, write: if request.auth != null &&
-                              request.auth.uid in workspaceMembers();
+        allow read, write: if request.auth != null;
       }
-
     }
+
   }
 }

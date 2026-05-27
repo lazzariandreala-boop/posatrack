@@ -43,7 +43,6 @@ export function useAuth() {
 
     subscribeAuthState(
       async (user) => {
-        // ensureUserDoc è già non-bloccante internamente
         void ensureUserDoc(user)
         currentUser.value = toAppUser(user)
         authLoading.value = false

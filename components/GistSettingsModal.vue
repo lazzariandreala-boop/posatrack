@@ -90,7 +90,7 @@ async function saveAndTest(): Promise<void> {
   if (data !== null) {
     feedback.value = { ok: true, msg: 'Connessione riuscita! Configurazione salvata.' }
     // Avvia la sync iniziale per allineare i dati
-    await store.initSync()
+    await store.syncNow()
   } else {
     feedback.value = { ok: false, msg: `Connessione fallita: ${gistSync.syncError.value}` }
     gistSync.clearConfig()
@@ -102,7 +102,7 @@ async function syncNow(): Promise<void> {
   isWorking.value  = true
   workingMsg.value = 'Sincronizzazione in corso…'
   feedback.value   = null
-  await store.initSync()
+  await store.syncNow()
   isWorking.value = false
   if (gistSync.syncStatus.value === 'ok') {
     feedback.value = { ok: true, msg: 'Sincronizzazione completata.' }

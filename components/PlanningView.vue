@@ -7,7 +7,7 @@
  *   Sinistra: calendario mensile + form aggiunta/modifica ordine
  *   Destra:   lista ordini del giorno selezionato + Gantt 3 settimane
  */
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useStore }    from '~/composables/useStore'
 import { useAppState } from '~/composables/useAppState'
 import { useExport }   from '~/composables/useExport'
@@ -114,6 +114,20 @@ function fmtDate(dateStr: string): string {
   return `${d} ${months[m - 1]}`
 }
 
+// ── Modal form ───────────────────────────────────────────────────────
+const formModalOpen = ref(false)
+
+function openNewForm(): void {
+  resetFormData()
+  formModalOpen.value = true
+}
+
+function handleEscape(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && formModalOpen.value) cancelForm()
+}
+onMounted(() => document.addEventListener('keydown', handleEscape))
+onUnmounted(() => document.removeEventListener('keydown', handleEscape))
+
 // ── Form aggiunta / modifica ──────────────────────────────────────────
 const editingId    = ref<string | null>(null)
 const formData     = ref({
@@ -156,7 +170,8 @@ function resetFormData(): void {
 }
 
 function openEditForm(wo: WorkOrder): void {
-  editingId.value = wo.id
+  editingId.value     = wo.id
+  formModalOpen.value = true
   const et = wo.estimatedTime ?? 0
   formData.value  = {
     orderNumber:          wo.orderNumber,
@@ -178,6 +193,7 @@ function openEditForm(wo: WorkOrder): void {
 
 function cancelForm(): void {
   resetFormData()
+  formModalOpen.value = false
 }
 
 function saveForm(): void {
@@ -263,6 +279,7 @@ function saveForm(): void {
   }
 
   resetFormData()
+  formModalOpen.value = false
 }
 
 // ── Spostamento ordine ────────────────────────────────────────────────
@@ -458,7 +475,11 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
         <div class="hdr-day">PIANIFICAZIONE</div>
         <div class="page-title">Lavorazioni</div>
       </div>
-      <div>
+      <div class="hdr-actions">
+        <button class="btn-pianifica" @click="openNewForm">
+          <svg viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Pianifica
+        </button>
         <button
           class="btn btn-ghost btn-sm btn-icon"
           @click="exporter.exportPlanning(
@@ -474,6 +495,7 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
         </button>
       </div>
     </div>
+
 
     <!-- ── Gantt a tutta larghezza (SOPRA) ─────────────────────────── -->
     <div class="planning-gantt">
@@ -676,172 +698,166 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
         </div>
       </div>
 
-      <!-- DESTRA: Form nuova / modifica lavorazione ────────────────── -->
-      <div class="planning-col">
-        <div class="slabel" style="margin-bottom: 12px">
-          {{ editingId ? 'MODIFICA LAVORAZIONE' : 'NUOVA LAVORAZIONE' }}
-        </div>
-        <div class="card form-card">
-          <div class="plan-form">
+    </div><!-- /planning-top -->
 
-            <!-- Tab tipo -->
-            <div class="type-tabs">
-              <button
-                v-for="t in planningTypes"
-                :key="t"
-                type="button"
-                class="type-tab"
-                :class="{ active: formData.type === t }"
-                :style="formData.type === t ? { borderColor: ACT[t]?.color, color: ACT[t]?.color } : {}"
-                @click="formData.type = t"
-              >
-                {{ ACT[t]?.emoji }} {{ ACT[t]?.label }}
-              </button>
-            </div>
+    <!-- ── Modal Nuova / Modifica lavorazione ──────────────────────── -->
+    <Teleport to="body">
+      <div v-if="formModalOpen" class="plan-overlay" @click.self="cancelForm">
+        <div class="plan-modal" role="dialog" :aria-label="editingId ? 'Modifica lavorazione' : 'Nuova lavorazione'">
 
-            <!-- Campi POSA -->
-            <template v-if="formData.type === 'posa'">
-              <label class="field-label">N° ordine *</label>
-              <input v-model="formData.orderNumber" class="field-input" type="text" placeholder="es. ORD-2025-001" />
-              <label class="field-label">Attrezzatura *</label>
-              <CatalogSelect v-model="formData.detail" value-field="label" />
-              <label class="field-label">Link Maps cantiere</label>
-              <input v-model="formData.mapsLink" class="field-input" type="url" placeholder="https://maps.google.com/..." />
-            </template>
-
-            <!-- Campi TRASFERIMENTO -->
-            <template v-if="formData.type === 'trasferimento'">
-              <label class="field-label">Destinazione</label>
-              <input v-model="formData.detail" class="field-input" type="text" placeholder="Es. Parco Comunale..." />
-              <label class="field-label" style="margin-top: 8px">Costi previsione</label>
-              <div>
-                <label class="field-label">Viaggio € (prev.)</label>
-                <input v-model.number="formData.travelCostEstimate" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
-              </div>
-            </template>
-
-            <!-- Campi ALTRO -->
-            <template v-if="formData.type === 'altro'">
-              <label class="field-label">Descrizione *</label>
-              <input v-model="formData.detail" class="field-input" type="text" placeholder="Descrizione del lavoro..." />
-            </template>
-
-            <!-- Data -->
-            <label class="field-label">Data *</label>
-            <input v-model="formData.date" class="field-input" type="date" />
-
-            <!-- Durata + Stima tempo affiancate -->
-            <div v-if="!editingId" class="dur-stima-row">
-              <div class="dur-stima-col">
-                <label class="field-label">Durata</label>
-                <div class="duration-row">
-                  <button type="button" class="dur-btn" @click="formData.estimatedDuration = Math.max(1, formData.estimatedDuration - 1)">−</button>
-                  <input v-model.number="formData.estimatedDuration" class="field-input dur-input" type="number" min="1" max="30" />
-                  <button type="button" class="dur-btn" @click="formData.estimatedDuration = Math.min(30, formData.estimatedDuration + 1)">+</button>
-                </div>
-                <span class="dur-label">{{ formData.estimatedDuration === 1 ? 'giorno lav.' : 'giorni (Lun–Ven)' }}</span>
-              </div>
-              <div class="dur-stima-col">
-                <label class="field-label">Stima tempo</label>
-                <div class="duration-row">
-                  <input v-model.number="formData.estimatedTimeH" class="field-input dur-input" type="number" min="0" max="23" placeholder="0" />
-                  <span class="dur-sep">h</span>
-                  <input v-model.number="formData.estimatedTimeM" class="field-input dur-input" type="number" min="0" max="59" step="15" placeholder="0" />
-                  <span class="dur-sep">m</span>
-                </div>
-                <span class="dur-label">
-                  <template v-if="formData.estimatedTimeH || formData.estimatedTimeM">{{ fmtEstimatedTime(formData.estimatedTimeH * 60 + formData.estimatedTimeM) }}</template>
-                  <template v-else>ore · minuti</template>
-                </span>
-              </div>
-            </div>
-
-            <!-- Solo stima quando si modifica -->
-            <template v-if="editingId">
-              <div class="editing-single-day-note">ℹ Stai modificando questa singola giornata.</div>
-              <label class="field-label">Stima tempo</label>
-              <div class="duration-row">
-                <input v-model.number="formData.estimatedTimeH" class="field-input dur-input" type="number" min="0" max="23" placeholder="0" />
-                <span class="dur-sep">h</span>
-                <input v-model.number="formData.estimatedTimeM" class="field-input dur-input" type="number" min="0" max="59" step="15" placeholder="0" />
-                <span class="dur-sep">m</span>
-                <span class="dur-label">
-                  <template v-if="formData.estimatedTimeH || formData.estimatedTimeM">{{ fmtEstimatedTime(formData.estimatedTimeH * 60 + formData.estimatedTimeM) }}</template>
-                </span>
-              </div>
-            </template>
-
-            <!-- Preview date multi-giorno -->
-            <div v-if="!editingId && formData.estimatedDuration > 1 && durationPreviewDates.length" class="duration-preview">
-              <div class="duration-preview-title">Giornate che verranno create:</div>
-              <div class="duration-preview-dates">
-                <span v-for="(d, i) in durationPreviewDates" :key="d" class="duration-preview-chip">{{ i + 1 }}. {{ fmtShortDate(d) }}</span>
-              </div>
-            </div>
-
-            <!-- Costi previsione POSA -->
-            <template v-if="formData.type === 'posa'">
-              <label class="field-label" style="margin-top: 8px">Costi previsione</label>
-              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; margin-bottom:10px">
-                <div>
-                  <label class="field-label">Pranzo € (prev.)</label>
-                  <input v-model.number="formData.lunchCostEstimate" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
-                </div>
-                <div>
-                  <label class="field-label">Materiale € (prev.)</label>
-                  <input v-model.number="formData.materialCostEstimate" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
-                </div>
-                <div>
-                  <label class="field-label">Squadre esterne €</label>
-                  <input v-model.number="formData.externalTeamCost" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
-                </div>
-                <div>
-                  <label class="field-label">Budget ordine €</label>
-                  <input v-model.number="formData.budget" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
-                </div>
-              </div>
-            </template>
-
-            <!-- Costi previsione ALTRO -->
-            <template v-if="formData.type === 'altro'">
-              <label class="field-label" style="margin-top: 8px">Costi previsione</label>
-              <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; margin-bottom:10px">
-                <div>
-                  <label class="field-label">Pranzo € (prev.)</label>
-                  <input v-model.number="formData.lunchCostEstimate" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
-                </div>
-                <div>
-                  <label class="field-label">Materiale € (prev.)</label>
-                  <input v-model.number="formData.materialCostEstimate" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
-                </div>
-                <div>
-                  <label class="field-label">Squadre esterne €</label>
-                  <input v-model.number="formData.externalTeamCost" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
-                </div>
-                <div>
-                  <label class="field-label">Budget ordine €</label>
-                  <input v-model.number="formData.budget" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
-                </div>
-              </div>
-            </template>
-
-            <!-- Note -->
-            <label class="field-label">Note</label>
-            <textarea v-model="formData.note" class="field-textarea" rows="2" placeholder="Note aggiuntive..." />
-
-            <div class="form-actions">
-              <button class="btn btn-full" @click="saveForm">
-                <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
-                {{ editingId ? 'Salva modifiche' : 'Pianifica' }}
-              </button>
-              <button v-if="editingId" class="btn btn-ghost btn-full" @click="cancelForm">Annulla</button>
-            </div>
-
+          <!-- Header modal -->
+          <div class="plan-modal-hdr">
+            <span class="plan-modal-title">{{ editingId ? 'Modifica lavorazione' : 'Nuova lavorazione' }}</span>
+            <button class="plan-modal-close" @click="cancelForm">
+              <svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
           </div>
+
+          <!-- Body modal — due colonne -->
+          <div class="plan-modal-body">
+            <div class="plan-modal-grid">
+
+              <!-- Colonna sinistra: tipo + campi tipo-dipendenti + note -->
+              <div class="plan-modal-col">
+
+                <!-- Tab tipo -->
+                <div class="type-tabs">
+                  <button
+                    v-for="t in planningTypes"
+                    :key="t"
+                    type="button"
+                    class="type-tab"
+                    :class="{ active: formData.type === t }"
+                    :style="formData.type === t ? { borderColor: ACT[t]?.color, color: ACT[t]?.color } : {}"
+                    @click="formData.type = t"
+                  >{{ ACT[t]?.emoji }} {{ ACT[t]?.label }}</button>
+                </div>
+
+                <!-- Campi POSA -->
+                <template v-if="formData.type === 'posa'">
+                  <label class="field-label">N° ordine *</label>
+                  <input v-model="formData.orderNumber" class="field-input" type="text" placeholder="es. ORD-2025-001" />
+                  <label class="field-label">Attrezzatura *</label>
+                  <CatalogSelect v-model="formData.detail" value-field="label" />
+                  <label class="field-label">Link Maps cantiere</label>
+                  <input v-model="formData.mapsLink" class="field-input" type="url" placeholder="https://maps.google.com/..." />
+                </template>
+
+                <!-- Campi TRASFERIMENTO -->
+                <template v-if="formData.type === 'trasferimento'">
+                  <label class="field-label">Destinazione</label>
+                  <input v-model="formData.detail" class="field-input" type="text" placeholder="Es. Parco Comunale..." />
+                  <label class="field-label" style="margin-top: 8px">Viaggio € (prev.)</label>
+                  <input v-model.number="formData.travelCostEstimate" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
+                </template>
+
+                <!-- Campi ALTRO -->
+                <template v-if="formData.type === 'altro'">
+                  <label class="field-label">Descrizione *</label>
+                  <input v-model="formData.detail" class="field-input" type="text" placeholder="Descrizione del lavoro..." />
+                </template>
+
+                <!-- Note -->
+                <label class="field-label" style="margin-top: 8px">Note</label>
+                <textarea v-model="formData.note" class="field-textarea" rows="4" placeholder="Note aggiuntive..." />
+
+              </div>
+
+              <!-- Colonna destra: data + durata + costi -->
+              <div class="plan-modal-col">
+
+                <!-- Data -->
+                <label class="field-label">Data *</label>
+                <input v-model="formData.date" class="field-input" type="date" />
+
+                <!-- Durata + Stima (solo in creazione) -->
+                <div v-if="!editingId" class="dur-stima-row" style="margin-top: 8px">
+                  <div class="dur-stima-col">
+                    <label class="field-label">Durata</label>
+                    <div class="duration-row">
+                      <button type="button" class="dur-btn" @click="formData.estimatedDuration = Math.max(1, formData.estimatedDuration - 1)">−</button>
+                      <input v-model.number="formData.estimatedDuration" class="field-input dur-input" type="number" min="1" max="30" />
+                      <button type="button" class="dur-btn" @click="formData.estimatedDuration = Math.min(30, formData.estimatedDuration + 1)">+</button>
+                    </div>
+                    <span class="dur-label">{{ formData.estimatedDuration === 1 ? 'giorno lav.' : 'giorni (Lun–Ven)' }}</span>
+                  </div>
+                  <div class="dur-stima-col">
+                    <label class="field-label">Stima tempo</label>
+                    <div class="duration-row">
+                      <input v-model.number="formData.estimatedTimeH" class="field-input dur-input" type="number" min="0" max="23" placeholder="0" />
+                      <span class="dur-sep">h</span>
+                      <input v-model.number="formData.estimatedTimeM" class="field-input dur-input" type="number" min="0" max="59" step="15" placeholder="0" />
+                      <span class="dur-sep">m</span>
+                    </div>
+                    <span class="dur-label">
+                      <template v-if="formData.estimatedTimeH || formData.estimatedTimeM">{{ fmtEstimatedTime(formData.estimatedTimeH * 60 + formData.estimatedTimeM) }}</template>
+                      <template v-else>ore · minuti</template>
+                    </span>
+                  </div>
+                </div>
+
+                <!-- Solo stima (in modifica) -->
+                <template v-if="editingId">
+                  <div class="editing-single-day-note" style="margin-top: 8px">ℹ Stai modificando questa singola giornata.</div>
+                  <label class="field-label">Stima tempo</label>
+                  <div class="duration-row">
+                    <input v-model.number="formData.estimatedTimeH" class="field-input dur-input" type="number" min="0" max="23" placeholder="0" />
+                    <span class="dur-sep">h</span>
+                    <input v-model.number="formData.estimatedTimeM" class="field-input dur-input" type="number" min="0" max="59" step="15" placeholder="0" />
+                    <span class="dur-sep">m</span>
+                    <span class="dur-label">
+                      <template v-if="formData.estimatedTimeH || formData.estimatedTimeM">{{ fmtEstimatedTime(formData.estimatedTimeH * 60 + formData.estimatedTimeM) }}</template>
+                    </span>
+                  </div>
+                </template>
+
+                <!-- Preview date multi-giorno -->
+                <div v-if="!editingId && formData.estimatedDuration > 1 && durationPreviewDates.length" class="duration-preview" style="margin-top: 8px">
+                  <div class="duration-preview-title">Giornate che verranno create:</div>
+                  <div class="duration-preview-dates">
+                    <span v-for="(d, i) in durationPreviewDates" :key="d" class="duration-preview-chip">{{ i + 1 }}. {{ fmtShortDate(d) }}</span>
+                  </div>
+                </div>
+
+                <!-- Costi previsione (posa + altro) -->
+                <template v-if="formData.type === 'posa' || formData.type === 'altro'">
+                  <label class="field-label" style="margin-top: 12px">Costi previsione</label>
+                  <div class="costs-grid">
+                    <div>
+                      <label class="field-label">Pranzo € (prev.)</label>
+                      <input v-model.number="formData.lunchCostEstimate" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
+                    </div>
+                    <div>
+                      <label class="field-label">Materiale € (prev.)</label>
+                      <input v-model.number="formData.materialCostEstimate" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
+                    </div>
+                    <div>
+                      <label class="field-label">Squadre esterne €</label>
+                      <input v-model.number="formData.externalTeamCost" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
+                    </div>
+                    <div>
+                      <label class="field-label">Budget ordine €</label>
+                      <input v-model.number="formData.budget" class="field-input" type="number" min="0" step="0.01" placeholder="0" />
+                    </div>
+                  </div>
+                </template>
+
+              </div>
+            </div>
+          </div>
+
+          <!-- Footer modal -->
+          <div class="plan-modal-footer">
+            <button class="btn btn-ghost" @click="cancelForm">Annulla</button>
+            <button class="btn btn-pianifica-submit" @click="saveForm">
+              <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+              {{ editingId ? 'Salva modifiche' : 'Pianifica' }}
+            </button>
+          </div>
+
         </div>
       </div>
-
-    </div><!-- /planning-top -->
+    </Teleport>
 
   </div>
 </template>
@@ -861,7 +877,7 @@ function handleGanttCellClick(row: GanttRow, dateStr: string): void {
 
 .planning-top {
   display: grid;
-  grid-template-columns: 280px 1fr 300px;
+  grid-template-columns: 280px 1fr;
   gap: 20px;
   align-items: start;
   width: 100%;
@@ -1428,6 +1444,155 @@ $dur-size: 36px;
   background: rgba(255, 95, 0, .12) !important;
   color: var(--orange) !important;
   border-color: var(--orange) !important;
+}
+
+/* ─── Header actions ────────────────────────────────────────────── */
+.hdr-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.btn-pianifica {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 18px;
+  background: var(--orange);
+  color: #fff;
+  border: none;
+  border-radius: var(--r-sm);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .12s;
+
+  &:hover { background: var(--orange-d); }
+
+  svg {
+    width: 15px; height: 15px;
+    stroke: currentColor; fill: none;
+    stroke-width: 2.5; stroke-linecap: round;
+  }
+}
+
+/* ─── Modal ──────────────────────────────────────────────────────── */
+.plan-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+  padding: 20px;
+}
+
+.plan-modal {
+  background: var(--surface);
+  border: 1px solid var(--border2);
+  border-radius: var(--r);
+  width: 100%;
+  max-width: 830px;
+  max-height: 94vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, .5);
+}
+
+.plan-modal-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.plan-modal-title {
+  font-family: 'Barlow Condensed', sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  color: var(--text);
+}
+
+.plan-modal-close {
+  width: 32px; height: 32px;
+  border: none; background: transparent; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: var(--r-sm); color: var(--muted);
+  transition: background .12s, color .12s;
+
+  &:hover { background: var(--surface2); color: var(--text); }
+
+  svg {
+    width: 16px; height: 16px;
+    stroke: currentColor; fill: none;
+    stroke-width: 2; stroke-linecap: round;
+  }
+}
+
+.plan-modal-body {
+  overflow-y: auto;
+  padding: 22px;
+  flex: 1;
+}
+
+.plan-modal-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+.plan-modal-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plan-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 22px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.btn-pianifica-submit {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 22px;
+  background: var(--orange);
+  color: #fff;
+  border: none;
+  border-radius: var(--r-sm);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .12s;
+
+  &:hover { background: var(--orange-d); }
+
+  svg {
+    width: 15px; height: 15px;
+    stroke: currentColor; fill: none;
+    stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round;
+  }
+}
+
+.costs-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
 }
 
 /* ─── Gantt HTML interattivo ─────────────────────────────────────── */
