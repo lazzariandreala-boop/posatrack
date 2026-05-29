@@ -13,11 +13,11 @@ export default defineNuxtPlugin(() => {
   const config = useRuntimeConfig()
 
   initFirebase({
-    apiKey:            config.public.firebaseApiKey,
-    authDomain:        config.public.firebaseAuthDomain,
-    projectId:         config.public.firebaseProjectId,
-    storageBucket:     config.public.firebaseStorageBucket,
-    messagingSenderId: config.public.firebaseMessagingSenderId,
-    appId:             config.public.firebaseAppId,
+    apiKey:            String(config.public.firebaseApiKey).trim(),
+    authDomain:        String(config.public.firebaseAuthDomain).trim(),
+    projectId:         String(config.public.firebaseProjectId).trim(),
+    storageBucket:     String(config.public.firebaseStorageBucket).trim(),
+    messagingSenderId: String(config.public.firebaseMessagingSenderId).trim(),
+    appId:             String(config.public.firebaseAppId).trim(),
   })
 })
