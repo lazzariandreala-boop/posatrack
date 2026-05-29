@@ -82,7 +82,7 @@ export function parseAuthError(e: unknown): string {
     'auth/network-request-failed':  'Errore di rete. Controlla la connessione.',
     'auth/too-many-requests':       'Troppi tentativi. Riprova tra qualche minuto.',
     'auth/operation-not-allowed':   'Login con Google non abilitato. Abilitalo in Firebase Console → Authentication → Sign-in methods.',
-    'auth/unauthorized-domain':     'Dominio non autorizzato. Aggiungi "localhost" in Firebase Console → Authentication → Settings → Authorized domains.',
+    'auth/unauthorized-domain':     `Dominio non autorizzato (${typeof window !== 'undefined' ? window.location.hostname : 'dominio sconosciuto'}). Aggiungilo in Firebase Console → Authentication → Settings → Domini autorizzati.`,
     'auth/internal-error':          'Errore interno Firebase. Riprova.',
     'auth/account-exists-with-different-credential':
       'Esiste già un account con questa email. Accedi con il metodo originale.',
