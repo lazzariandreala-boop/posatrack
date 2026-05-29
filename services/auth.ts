@@ -77,13 +77,21 @@ export function parseAuthError(e: unknown): string {
     'auth/weak-password':           'La password deve avere almeno 6 caratteri.',
     'auth/invalid-email':           'Formato email non valido.',
     'auth/popup-closed-by-user':    'Finestra di accesso chiusa.',
+    'auth/popup-blocked':           'Popup bloccato dal browser. Abilita i popup per questo sito.',
+    'auth/cancelled-popup-request': 'Richiesta annullata.',
     'auth/network-request-failed':  'Errore di rete. Controlla la connessione.',
     'auth/too-many-requests':       'Troppi tentativi. Riprova tra qualche minuto.',
-    'auth/cancelled-popup-request': 'Richiesta annullata.',
+    'auth/operation-not-allowed':   'Login con Google non abilitato. Abilitalo in Firebase Console → Authentication → Sign-in methods.',
+    'auth/unauthorized-domain':     'Dominio non autorizzato. Aggiungi "localhost" in Firebase Console → Authentication → Settings → Authorized domains.',
+    'auth/internal-error':          'Errore interno Firebase. Riprova.',
     'auth/account-exists-with-different-credential':
       'Esiste già un account con questa email. Accedi con il metodo originale.',
   }
-  return map[code] ?? (code ? `Errore auth: ${code}` : 'Errore sconosciuto.')
+  if (map[code]) return map[code]
+  if (code) return `Errore auth: ${code}`
+  const msg = (e as { message?: string })?.message
+  console.error('[auth] errore non gestito:', e)
+  return msg ? `Errore: ${msg}` : 'Errore sconosciuto.'
 }
 
 // ── Listener ──────────────────────────────────────────────────────────
