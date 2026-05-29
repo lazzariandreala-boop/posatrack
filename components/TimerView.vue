@@ -451,6 +451,21 @@ watch(
   { immediate: true },
 )
 
+// Rileva work orders di oggi aggiunti in real-time da altri account e crea le
+// relative attività pianificate (autoCreatePlannedActivities è idempotente:
+// non crea duplicati, e chiama _commit() solo se serve davvero).
+watch(
+  () => store.getWorkOrdersForDate(todayStr()).map(wo => wo.id).join(','),
+  (newIds) => {
+    if (newIds && store.syncStatus.value === 'ok' && _plannedCreated) {
+      const created = store.autoCreatePlannedActivities(todayStr())
+      if (created > 0) {
+        appState.showToast(`📋 ${created} lavorazion${created === 1 ? 'e pianificata' : 'i pianificate'} per oggi`)
+      }
+    }
+  },
+)
+
 onUnmounted(() => {
   if (clockInterval !== null) clearInterval(clockInterval)
 })

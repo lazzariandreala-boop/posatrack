@@ -328,10 +328,12 @@ export async function pullStore(workspaceId: string): Promise<StoreData | null> 
 /**
  * Scrive i dati del workspace su Firestore.
  * Le foto base64 vengono strippate: in Firestore restano solo gli URL Cloudinary.
+ * merge:true preserva i campi non presenti nel payload (es. workOrders scritti da
+ * un altro account prima che questo client li ricevesse via onSnapshot).
  */
 export async function pushStore(workspaceId: string, data: StoreData): Promise<void> {
   const payload = stripPhotosForFirestore(data)
-  await setDoc(storeRef(workspaceId), payload)
+  await setDoc(storeRef(workspaceId), payload, { merge: true })
 }
 
 /**
